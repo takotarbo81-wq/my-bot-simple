@@ -14,6 +14,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
+    // 1. أمر إرسال البنر والزر
     if (message.content === '!setup') {
         const embed = new EmbedBuilder()
             .setTitle('مركز الدعم | Support Center')
@@ -31,63 +32,50 @@ client.on('messageCreate', async message => {
         await message.channel.send({ embeds: [embed], components: [row] });
         await message.delete();
     }
+
+    // 2. الرد الذكي داخل قنوات التكت
+    if (message.channel.name.startsWith('ticket-')) {
+        const content = message.content.toLowerCase();
+        
+        if (content.includes('سلام') || content.includes('مرحبا')) {
+            message.reply('وعليكم السلام ورحمة الله! كيف يمكنني مساعدتك اليوم؟');
+        } else if (content.includes('مشكلة')) {
+            message.reply('أنا أسمعك، تفضل بشرح مشكلتك بالتفصيل وسأحاول مساعدتك.');
+        } else {
+            message.reply('تم استلام رسالتك، الدعم الفني سيقوم بالرد عليك قريباً.');
+        }
+    }
 });
 
+// 3. التفاعل مع الأزرار (فتح وإغلاق التذكرة)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
     if (interaction.customId === 'open_ticket') {
-        const guild = interaction.guild;
-        const userName = interaction.user.username;
-
-        const channel = await guild.channels.create({
-            name: `ticket-${userName}`,
+        const channel = await interaction.guild.channels.create({
+            name: `ticket-${interaction.user.username}`,
             type: ChannelType.GuildText,
             permissionOverwrites: [
-                {
-                    id: guild.id,
-                    deny: [PermissionFlagsBits.ViewChannel],
-                },
-                {
-                    id: interaction.user.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-                },
-                {
-                    id: client.user.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-                },
+                { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+                { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+                { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
             ],
         });
 
-        const closeRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('close_ticket')
-                    .setLabel('إغلاق التذكرة 🔒')
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId('claim_ticket')
-                    .setLabel('تحويل للدعم 👨‍💻')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
         await channel.send({
-            content: `أهلاً بك <@${interaction.user.id}>! هذا تكت الدعم الخاص بك. تفضل بطرح مشكلتك وسيقوم البوت بمساعدتك.`,
-            components: [closeRow]
+            content: `أهلاً <@${interaction.user.id}>! تفضل بطرح مشكلتك.`,
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('close_ticket').setLabel('إغلاق 🔒').setStyle(ButtonStyle.Danger)
+                )
+            ]
         });
-
-        await interaction.reply({ content: `تم فتح التذكرة الخاصة بك بنجاح: ${channel}`, ephemeral: true });
+        await interaction.reply({ content: `تم فتح تذكرتك هنا: ${channel}`, ephemeral: true });
     }
 
     if (interaction.customId === 'close_ticket') {
-        await interaction.reply({ content: 'جاري إغلاق التذكرة وحذف القناة...' });
-        setTimeout(async () => {
-            await interaction.channel.delete();
-        }, 3000);
-    }
-
-    if (interaction.customId === 'claim_ticket') {
-        await interaction.reply({ content: '🚨 تم تنبيه فريق الدعم والوكلاء للتدخل وحل المشكلة في أقرب وقت!' });
+        await interaction.reply('جاري إغلاق التذكرة...');
+        setTimeout(() => interaction.channel.delete(), 3000);
     }
 });
 
@@ -96,4 +84,6 @@ client.once('ready', () => {
 });
 
 client.login(TOKEN);
+
+    
 
