@@ -1,47 +1,47 @@
-const { Client, GatewayIntentBits, ChannelType, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
 
-client.once('ready', () => {
-    console.log(`تم تشغيل البوت بنجاح: ${client.user.tag}`);
-});
-
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    if (message.content === '!ticket') {
+    if (message.content === '!setup') {
+        const embed = new EmbedBuilder()
+            .setTitle('مركز الدعم | Support Center')
+            .setDescription('Need help? Open a private ticket and our support team will assist you.\n\nتحتاج إلى مساعدة؟ افتح تذكرة خاصة وسيساعدك فريق الدعم.')
+            .setColor('#0099ff');
+
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('create_ticket')
-                    .setLabel('🎫 فتح تكت جديدة')
-                    .setStyle(ButtonStyle.Primary),
+                    .setCustomId('open_ticket')
+                    .setLabel('فتح تذكرة | Open Ticket')
+                    .setStyle(ButtonStyle.Success)
             );
 
-        await message.channel.send({
-            content: 'اضغط على الزر بالأسفل لفتح تكت خاصة والتحدث مع الدعم:',
-            components: [row]
-        });
+        await message.channel.send({ embeds: [embed], components: [row] });
+        await message.delete();
     }
 });
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    if (interaction.customId === 'create_ticket') {
+    if (interaction.customId === 'open_ticket') {
         const guild = interaction.guild;
-        const member = interaction.member;
+        const userName = interaction.user.username;
 
         const channel = await guild.channels.create({
-            name: `ticket-${member.user.username}`,
+            name: `ticket-${userName}`,
             type: ChannelType.GuildText,
             permissionOverwrites: [
                 {
@@ -49,15 +49,51 @@ client.on('interactionCreate', async interaction => {
                     deny: [PermissionFlagsBits.ViewChannel],
                 },
                 {
-                    id: member.id,
+                    id: interaction.user.id,
                     allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                },
+                {
+                    id: client.user.id,
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
                 },
             ],
         });
 
-        await interaction.reply({ content: `تم فتح التكت بنجاح! توجه إلى هنا: ${channel}`, ephemeral: true });
-        await channel.send(`أهلاً بك يا ${member}! تفضل اطرح مشكلتك أو استفسارك، وسيتم خدمتك في أقرب وقت.`);
+        const closeRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('close_ticket')
+                    .setLabel('إغلاق التذكرة 🔒')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId('claim_ticket')
+                    .setLabel('تحويل للدعم 👨‍💻')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await channel.send({
+            content: `أهلاً بك <@${interaction.user.id}>! هذا تكت الدعم الخاص بك. تفضل بطرح مشكلتك وسيقوم البوت بمساعدتك.`,
+            components: [closeRow]
+        });
+
+        await interaction.reply({ content: `تم فتح التذكرة الخاصة بك بنجاح: ${channel}`, ephemeral: true });
+    }
+
+    if (interaction.customId === 'close_ticket') {
+        await interaction.reply({ content: 'جاري إغلاق التذكرة وحذف القناة...' });
+        setTimeout(async () => {
+            await interaction.channel.delete();
+        }, 3000);
+    }
+
+    if (interaction.customId === 'claim_ticket') {
+        await interaction.reply({ content: '🚨 تم تنبيه فريق الدعم والوكلاء للتدخل وحل المشكلة في أقرب وقت!' });
     }
 });
 
+client.once('ready', () => {
+    console.log(`تم تشغيل نظام التذاكر بنجاح: ${client.user.tag}`);
+});
+
 client.login(TOKEN);
+
