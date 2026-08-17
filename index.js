@@ -1,73 +1,101 @@
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, EmbedBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder } = require('discord.js');
+const OpenAI = require('openai');
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ]
+});
+
+// إعداد الذكاء الاصطناعي
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
 
-// أوامر البوت الأساسية
+// 1. أمر إرسال زر فتح التذكرة
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     if (message.content === '!setup') {
+        const embed = new EmbedBuilder()
+            .setTitle('مركز الدعم الذكي | AI Support')
+            .setDescription('تحتاج مساعدة؟ اضغط على الزر أدناه لفتح تذكرة وسيساعدك المساعد الذكي فوراً.')
+            .setColor('#0099ff');
+
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('open_ticket_menu').setLabel('فتح تذكرة دعم 🎫').setStyle(ButtonStyle.Success)
+            new ButtonBuilder()
+                .setCustomId('open_ticket')
+                .setLabel('فتح تذكرة جديدة 🎫')
+                .setStyle(ButtonStyle.Success)
         );
-        await message.channel.send({ content: 'مرحباً، اضغط الزر أدناه لفتح تذكرة:', components: [row] });
+
+        await message.channel.send({ embeds: [embed], components: [row] });
         await message.delete();
     }
 
-    // الرد الذكي: إذا المستخدم كتب كلمة وكيل في أي وقت
-    if (message.channel.name.startsWith('ticket-') && message.content.toLowerCase().includes('وكيل')) {
-        message.reply('🚨 تم استدعاء الوكيل! سيقوم أحد أعضاء الإدارة بالرد عليك قريباً.');
+    // 2. الذكاء الاصطناعي يرد داخل التكت
+    if (message.channel.name.startsWith('ticket-')) {
+        await message.channel.sendTyping();
+
+        try {
+            const completion = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    { role: "system", content: "أنت مساعد دعم فني ذكي وودود جداً على ديسكورد. مهمتك مساعدة المستخدمين في حل مشاكلهم التقنية أو الإجابة على استفساراتهم باختصار ووضوح باللغة العربية." },
+                    { role: "user", content: message.content }
+                ],
+            });
+
+            const aiReply = completion.choices[0].message.content;
+            await message.reply(aiReply);
+
+        } catch (error) {
+            console.error('خطأ في الذكاء الاصطناعي:', error);
+            await message.reply('عذراً، حدث خطأ بسيط. يمكنك الضغط على "طلب وكيل" لتتواصل مع الإدارة مباشرة.');
+        }
     }
 });
 
+// 3. التفاعل مع الأزرار (فتح، طلب وكيل، إغلاق)
 client.on('interactionCreate', async interaction => {
-    if (interaction.isButton()) {
-        // فتح قائمة الاختيارات
-        if (interaction.customId === 'open_ticket_menu') {
-            const menu = new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('ticket_type')
-                    .setPlaceholder('اختر نوع المشكلة...')
-                    .addOptions([
-                        { label: 'مشكلة تقنية', value: 'tech', emoji: '🛠️' },
-                        { label: 'شكوى / وكيل', value: 'agent', emoji: '👨‍💼' }
-                    ])
-            );
-            await interaction.reply({ content: 'اختر نوع التذكرة:', components: [menu], ephemeral: true });
-        }
+    if (!interaction.isButton()) return;
 
-        // إغلاق التذكرة + تقييم
-        if (interaction.customId === 'close_ticket') {
-            const rateRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('rate_5').setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Secondary)
-            );
-            await interaction.reply({ content: 'شكراً لاستخدامك الدعم! كيف تقيمنا؟', components: [rateRow] });
-            setTimeout(() => interaction.channel.delete(), 5000);
-        }
-    }
-
-    if (interaction.isStringSelectMenu()) {
-        const guild = interaction.guild;
-        const channel = await guild.channels.create({
+    if (interaction.customId === 'open_ticket') {
+        const channel = await interaction.guild.channels.create({
             name: `ticket-${interaction.user.username}`,
-            type: ChannelType.GuildText
+            type: ChannelType.GuildText,
         });
 
-        const controlRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('close_ticket').setLabel('إغلاق 🔒').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('call_agent').setLabel('طلب وكيل 👨‍💼').setStyle(ButtonStyle.Primary)
+        const actionRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('call_agent').setLabel('طلب وكيل 👨‍💼').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('close_ticket').setLabel('إغلاق 🔒').setStyle(ButtonStyle.Danger)
         );
 
-        await channel.send({ 
-            content: `أهلاً ${interaction.user}، نوع الطلب: ${interaction.values[0]}.\nيرجى شرح مشكلتك. إذا أردت وكيل، اضغط الزر بالأسفل.`, 
-            components: [controlRow] 
+        await channel.send({
+            content: `أهلاً بك <@${interaction.user.id}>! أنا المساعد الذكي. تفضل بطرح مشكلتك وسأحاول حلها. إذا احتجت بشرياً، اضغط "طلب وكيل".`,
+            components: [actionRow]
         });
-        await interaction.update({ content: '✅ تم فتح التذكرة!', components: [] });
+
+        await interaction.reply({ content: `✅ تم فتح تذكرتك هنا: ${channel}`, ephemeral: true });
     }
+
+    if (interaction.customId === 'call_agent') {
+        await interaction.reply({ content: '🚨 **تم طلب وكيل بنجاح!** سيقوم أحد مشرفي الإدارة بالدخول لمساعدتك قريباً.' });
+    }
+
+    if (interaction.customId === 'close_ticket') {
+        await interaction.reply({ content: '🔒 جاري إغلاق التذكرة وحذف القناة...' });
+        setTimeout(() => interaction.channel.delete(), 3000);
+    }
+});
+
+client.once('ready', () => {
+    console.log(`البوت الذكي شغال بنجاح: ${client.user.tag}`);
 });
 
 client.login(TOKEN);
