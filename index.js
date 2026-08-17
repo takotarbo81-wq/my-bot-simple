@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder } = require('discord.js');
-const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 
 const client = new Client({
     intents: [
@@ -10,10 +10,8 @@ const client = new Client({
     ]
 });
 
-// إعداد الذكاء الاصطناعي
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+// إعداد Google Gemini
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const TOKEN = process.env.DISCORD_TOKEN;
 
@@ -23,9 +21,9 @@ client.on('messageCreate', async message => {
 
     if (message.content === '!setup') {
         const embed = new EmbedBuilder()
-            .setTitle('مركز الدعم الذكي | AI Support')
-            .setDescription('تحتاج مساعدة؟ اضغط على الزر أدناه لفتح تذكرة وسيساعدك المساعد الذكي فوراً.')
-            .setColor('#0099ff');
+            .setTitle('مركز الدعم الذكي | Gemini AI Support')
+            .setDescription('تحتاج مساعدة؟ اضغط على الزر أدناه لفتح تذكرة وسيساعدك المساعد الذكي (Gemini) فوراً.')
+            .setColor('#4285F4');
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -38,30 +36,29 @@ client.on('messageCreate', async message => {
         await message.delete();
     }
 
-    // 2. الذكاء الاصطناعي يرد داخل التكت
+    // 2. الذكاء الاصطناعي (Gemini) يرد داخل التكت
     if (message.channel.name.startsWith('ticket-')) {
         await message.channel.sendTyping();
 
         try {
-            const completion = await openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                    { role: "system", content: "أنت مساعد دعم فني ذكي وودود جداً على ديسكورد. مهمتك مساعدة المستخدمين في حل مشاكلهم التقنية أو الإجابة على استفساراتهم باختصار ووضوح باللغة العربية." },
-                    { role: "user", content: message.content }
-                ],
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: message.content,
+                config: {
+                    systemInstruction: "أنت مساعد دعم فني ذكي وودود جداً على ديسكورد. مهمتك مساعدة المستخدمين في حل مشاكلهم التقنية أو الإجابة على استفساراتهم باختصار ووضوح باللغة العربية."
+                }
             });
 
-            const aiReply = completion.choices[0].message.content;
-            await message.reply(aiReply);
+            await message.reply(response.text);
 
         } catch (error) {
-            console.error('خطأ في الذكاء الاصطناعي:', error);
+            console.error('خطأ في جيميناي:', error);
             await message.reply('عذراً، حدث خطأ بسيط. يمكنك الضغط على "طلب وكيل" لتتواصل مع الإدارة مباشرة.');
         }
     }
 });
 
-// 3. التفاعل مع الأزرار (فتح، طلب وكيل، إغلاق)
+// 3. التفاعل مع الأزرار
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
@@ -77,7 +74,7 @@ client.on('interactionCreate', async interaction => {
         );
 
         await channel.send({
-            content: `أهلاً بك <@${interaction.user.id}>! أنا المساعد الذكي. تفضل بطرح مشكلتك وسأحاول حلها. إذا احتجت بشرياً، اضغط "طلب وكيل".`,
+            content: `أهلاً بك <@${interaction.user.id}>! أنا المساعد الذكي (Gemini). تفضل بطرح مشكلتك وسأحاول حلها. إذا احتجت بشرياً، اضغط "طلب وكيل".`,
             components: [actionRow]
         });
 
@@ -95,7 +92,7 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.once('ready', () => {
-    console.log(`البوت الذكي شغال بنجاح: ${client.user.tag}`);
+    console.log(`البوت شغال بـ Google Gemini بنجاح: ${client.user.tag}`);
 });
 
 client.login(TOKEN);
