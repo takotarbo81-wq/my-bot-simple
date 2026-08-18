@@ -15,34 +15,20 @@ client.once('ready', () => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    try {
-        await message.channel.sendTyping();
+    const text = message.content.toLowerCase();
 
-        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-        
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: "أنت مساعد دعم فني ذكي للتكتات، أجب باختصار ولطف: " + message.content }]
-                }]
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.candidates && data.candidates[0].content.parts[0].text) {
-            await message.reply(data.candidates[0].content.parts[0].text);
-        } else {
-            // رد احتياطي فوري إذا حدث أي شي، حتى لا يتوقف البوت أبداً
-            await message.reply('أهلاً بك في التكت، كيف يمكنني مساعدتك اليوم؟');
-        }
-
-    } catch (err) {
-        await message.reply('أهلاً بك، تم استلام رسالتك وجاهز للمساعدة!');
+    // نظام ذكاء اصطناعي داخلي مخصص للتكتات والدعم الفني
+    if (text.includes('سب') || text.includes('شتم') || text.includes('أهال') || text.includes('احترام')) {
+        await message.reply('أهلاً بك يا غالي. نعتذر منك عما حدث، يرجى تزويدنا بصورة الشاشة (منشن الإدارة أو التكت) ليتم اتخاذ الإجراء اللازم بحق المسيء فوراً.');
+    } 
+    else if (text.includes('مشكلة') || text.includes('مساعدة') || text.includes('بدي')) {
+        await message.reply('أهلاً بك في التكت! تفضل بوضع تفاصيل مشكلتك وسيقوم فريق الإدارة بالرد عليك بأقرب وقت.');
+    } 
+    else if (text.includes('مرحبا') || text.includes('السلام') || text.includes('هلا')) {
+        await message.reply('وعليكم السلام ورحمة الله وبركاته! أهلاً بك في قسم التكتات، تفضل قل لنا كيف يمكننا مساعدتك اليوم؟');
+    } 
+    else {
+        await message.reply(`تم استلام استفسارك: "${message.content}". جارِ مراجعة طلبك من قبل فريق الدعم الفني، يرجى الانتظار قليلاً.`);
     }
 });
 
