@@ -15,35 +15,8 @@ client.once('ready', () => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    try {
-        await message.channel.sendTyping();
-
-        // استخدام موديل gemini-pro المضمون 100%
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: message.content }]
-                }]
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.candidates && data.candidates[0].content.parts[0].text) {
-            await message.reply(data.candidates[0].content.parts[0].text);
-        } else if (data.error) {
-            await message.reply('خطأ من Gemini: ' + data.error.message);
-        } else {
-            await message.reply('لم يتم الرد.');
-        }
-
-    } catch (err) {
-        await message.reply('خطأ في الاتصال: ' + err.message);
-    }
+    // رد تجريبي مباشر للتأكد من أن البوت شغال 100%
+    await message.reply(`أهلاً بكِ! لقد استلمت رسالتك: "${message.content}"`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
