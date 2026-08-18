@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const client = new Client({
     intents: [
@@ -8,8 +7,6 @@ const client = new Client({
         GatewayIntentBits.MessageContent
     ]
 });
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 client.once('ready', () => {
     console.log(`Bot Ready: ${client.user.tag}`);
@@ -20,15 +17,31 @@ client.on('messageCreate', async message => {
 
     try {
         await message.channel.sendTyping();
-        
-        // استخدام الموديل القياسي والمباشر
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const result = await model.generateContent(message.content);
-        const response = await result.response;
-        
-        await message.reply(response.text());
-    } catch (error) {
-        await message.reply('خطأ: ' + error.message);
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{ text: message.content }]
+                }]
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.candidates && data.candidates[0].content.parts[0].text) {
+            await message.reply(data.candidates[0].content.parts[0].text);
+        } else if (data.error) {
+            await message.reply('خطأ من Gemini: ' + data.error.message);
+        } else {
+            await message.reply('لم يتم الرد.');
+        }
+
+    } catch (err) {
+        await message.reply('خطأ في الاتصال: ' + err.message);
     }
 });
 
