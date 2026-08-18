@@ -18,6 +18,7 @@ client.on('messageCreate', async message => {
     try {
         await message.channel.sendTyping();
 
+        // استخدام اسم الموديل الأساسي المعتمد في Groq
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -25,7 +26,7 @@ client.on('messageCreate', async message => {
                 'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
             },
             body: JSON.stringify({
-                model: 'llama-3.1-8b-instant',
+                model: 'llama3-8b',
                 messages: [{ role: 'user', content: message.content }]
             })
         });
