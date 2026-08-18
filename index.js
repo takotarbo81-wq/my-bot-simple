@@ -10,8 +10,8 @@ const client = new Client({
     ]
 });
 
-// تهيئة جوجل جيميني باستخدام مفتاح البيئة
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// تهيئة جوجل جيميني بالشكل الصحيح
+const ai = new GoogleGenAI({});
 
 client.once('ready', () => {
     console.log(`Bot is online as ${client.user.tag}!`);
@@ -20,14 +20,13 @@ client.once('ready', () => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // إذا تم عمل إشارة للبوت أو كتب في الخاص
     if (message.content) {
         try {
             message.channel.sendTyping();
             
-            // استخدام نموذج جيميني لتوليد الرد
+            // استدعاء الموديل بالطريقة الرسمية الصحيحة
             const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
+                model: 'gemini-1.5-flash',
                 contents: message.content,
             });
 
@@ -39,5 +38,4 @@ client.on('messageCreate', async message => {
     }
 });
 
-// تشغيل البوت باستخدام توكن ديسكورد
 client.login(process.env.DISCORD_TOKEN);
