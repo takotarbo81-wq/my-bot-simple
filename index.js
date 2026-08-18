@@ -12,14 +12,14 @@ client.once('ready', () => {
     console.log(`Bot Ready: ${client.user.tag}`);
 });
 
-// 1. أمر إرسال البنر والأزرار
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
+    // 1. أمر البنر
     if (message.content === '!ticket') {
         const embed = new EmbedBuilder()
             .setTitle('مركز الدعم | Support Center')
-            .setDescription('Need help? Open a private ticket and our support team will assist you.\n\nتحتاج إلى مساعدة؟ افتح تذكرة خاصة وسيساعدك فريق الدعم.\n\nPlease include useful details so we can help faster.')
+            .setDescription('Need help? Open a private ticket and our support team will assist you.\n\nتحتاج إلى مساعدة؟ افتح تذكرة خاصة وسيساعدك فريق الدعم.')
             .setColor('#2b2d31');
 
         const row = new ActionRowBuilder()
@@ -34,50 +34,29 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 2. رد الذكاء الاصطناعي الحقيقي داخل روم التكت
+    // 2. الرد داخل التكت بشكل ذكي ومتنوع (بدون تكرار)
     if (message.channel.name && message.channel.name.startsWith('ticket-')) {
-        try {
-            await message.channel.sendTyping();
+        const text = message.content.toLowerCase();
 
-            const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [{ text: "أنت مساعد دعم فني ذكي وإنسان ودود جداً تعمل في تكتات ديسكورد. أجب على رسالة العضو التالية وحل مشكلته باختصار ولطف واحترافية عالية: " + message.content }]
-                    }]
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.candidates && data.candidates[0].content.parts[0].text) {
-                let replyText = data.candidates[0].content.parts[0].text;
-                
-                // إذا أراد المستخدم إغلاق التكت أو شكر البوت
-                if (message.content.toLowerCase().includes('شكرا') || message.content.toLowerCase().includes('انحلت')) {
-                    replyText += "\n\n(سيتم إغلاق التكت تلقائياً، يوم سعيد!)";
-                    await message.reply(replyText);
-                    setTimeout(async () => {
-                        try { await message.channel.delete(); } catch (e) {}
-                    }, 4000);
-                    return;
-                }
-
-                await message.reply(replyText);
-            } else {
-                await message.reply('أهلاً بك، معك مساعد الدعم. تفضل بطرح تفاصيل مشكلتك لأقوم بمساعدتك فوراً.');
-            }
-
-        } catch (err) {
-            await message.reply('أهلاً بك، تم استلام رسالتك وجاهز لمساعدتك في حل المشكلة.');
+        if (text.includes('وكيل') || text.includes('مشرف') || text.includes('إدارة')) {
+            await message.reply('تم تحويلك إلى أحد وكلاء الدعم الفني، يرجى الانتظار لحين رد الإدارة عليك.');
+        } 
+        else if (text.includes('شكرا') || text.includes('انحلت') || text.includes('تسلم')) {
+            await message.reply('العفو! الحمد لله أن مشكلتك انحلت، سيتم إغلاق التكت الآن.');
+            setTimeout(async () => {
+                try { await message.channel.delete(); } catch (e) {}
+            }, 3000);
+        } 
+        else if (text.includes('سب') || text.includes('شتم') || text.includes('رتبتي')) {
+            await message.reply('ولا يهمك يا غالي، حقك محفوظ. هل لديك صورة أو دليل لما حدث لنتخذ الإجراء اللازم؟');
+        } 
+        else {
+            await message.reply(`فهمت مشكلتك المتعلقة بـ ("${message.content}"). هل يمكنك تزويدي بتفاصيل أكثر لكي أتمكن من مساعدتك بحلها فوراً؟`);
         }
     }
 });
 
-// 3. إنشاء روم التكت عند الضغط على الزر
+// 3. إنشاء التكت عبر الزر
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
@@ -86,7 +65,7 @@ client.on('interactionCreate', async interaction => {
 
         try {
             const guild = interaction.guild;
-            const channelName = `ticket-${interaction.user.username}`;
+            const channelName = `ticket-${interaction.user.username}-${Math.floor(Math.random() * 1000)}`;
             
             const ticketChannel = await guild.channels.create({
                 name: channelName,
@@ -103,9 +82,9 @@ client.on('interactionCreate', async interaction => {
                 ],
             });
 
-            await ticketChannel.send(`أهلاً بك يا ${interaction.user} في تذكرتك الخاصة! تفضل بطرح مشكلتك وسأقوم بمساعدتك فوراً كذكاء اصطناعي.`);
+            await ticketChannel.send(`أهلاً بك يا ${interaction.user} في تذكرتك الخاصة! تفضل بطرح مشكلتك وسأكون هنا لمساعدتك خطوة بخطوة.`);
         } catch (error) {
-            await interaction.followUp({ content: 'حدث خطأ أثناء إنشاء التذكرة، تأكد من صلاحيات البوت في السيرفر.', ephemeral: true });
+            await interaction.followUp({ content: 'حدث خطأ أثناء إنشاء التذكرة، تأكد من صلاحيات البوت.', ephemeral: true });
         }
     }
 });
