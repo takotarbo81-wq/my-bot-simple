@@ -1,7 +1,7 @@
 {
-  "name": "discord-gemini-bot",
+  "name": "my-bot-simple",
   "version": "1.0.0",
-  "description": "Discord Bot with Google Gemini AI",
+  "description": "Discord bot with Google Gemini",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
