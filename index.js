@@ -1,13 +1,16 @@
 const {
   Client,
   GatewayIntentBits,
-  Partials,
   ChannelType,
 } = require("discord.js");
 
 require("dotenv").config();
 
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
+
+// =========================
+// Discord
+// =========================
 
 const client = new Client({
   intents: [
@@ -15,59 +18,128 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
-  partials: [Partials.Channel],
 });
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// =========================
+// Gemini
+// =========================
 
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
 });
+
+// =========================
+// Bot Ready
+// =========================
 
 client.once("ready", () => {
-  console.log(`✅ البوت شغال باسم: ${client.user.tag}`);
+  console.log("================================");
+  console.log(`✅ البوت شغال: ${client.user.tag}`);
+  console.log("🤖 Gemini AI متصل");
+  console.log("================================");
 });
+
+// =========================
+// Messages
+// =========================
 
 client.on("messageCreate", async (message) => {
   try {
-    // لا يرد على نفسه أو على البوتات
+    // لا يرد على البوتات
     if (message.author.bot) return;
 
-    // فقط داخل التكتات
+    // فقط قنوات السيرفر
+    if (!message.guild) return;
+
+    // فقط القنوات النصية
+    if (message.channel.type !== ChannelType.GuildText) return;
+
+    // فقط التكتات
+    const channelName = message.channel.name.toLowerCase();
+
     const isTicket =
-      message.channel.type === ChannelType.GuildText &&
-      (
-        message.channel.name.toLowerCase().includes("ticket") ||
-        message.channel.name.toLowerCase().includes("تكت")
-      );
+      channelName.includes("ticket") ||
+      channelName.includes("تكت");
 
     if (!isTicket) return;
 
-    // رسالة مؤقتة
-    const thinking = await message.channel.send("🤖 جاري التفكير...");
+    // إذا الرسالة فاضية
+    if (!message.content.trim()) return;
 
-    const prompt = `
-أنت بوت دعم فني داخل سيرفر Discord.
-أجب باللغة العربية وبأسلوب محترم وواضح.
-لا تدّعي أنك موظف بشري.
-إذا لم تعرف الإجابة، قل للمستخدم إن الموظف يستطيع مساعدته.
+    // إظهار أن البوت يفكر
+    await message.channel.sendTyping();
+
+    console.log(
+      `📩 ${message.author.tag}: ${message.content}`
+    );
+
+    // =========================
+    // Gemini Request
+    // =========================
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+
+      contents: `
+أنت بوت دعم فني ذكي داخل تكتات Discord.
+
+قواعدك:
+- تحدث بالعربية.
+- كن محترمًا وودودًا.
+- اجعل الرد واضحًا ومختصرًا.
+- لا تقل إنك إنسان.
+- إذا لم تعرف الإجابة، قل إن الموظف يستطيع المساعدة.
+- لا تكرر كلام العميل بدون فائدة.
 
 رسالة العميل:
 ${message.content}
-`;
+      `,
 
-    const result = await model.generateContent(prompt);
-    const response = result.response.text();
+      config: {
+        temperature: 0.7,
+        maxOutputTokens: 500,
+      },
+    });
 
-    await thinking.edit(response);
+    const reply = response.text;
+
+    // =========================
+    // إرسال الرد
+    // =========================
+
+    if (!reply || !reply.trim()) {
+      await message.channel.send(
+        "❌ ما قدرت أطلع رد حاليًا، حاول مرة ثانية."
+      );
+      return;
+    }
+
+    // Discord عنده حد 2000 حرف
+    if (reply.length <= 2000) {
+      await message.channel.send(reply);
+    } else {
+      // تقسيم الرد الطويل
+      for (let i = 0; i < reply.length; i += 1900) {
+        await message.channel.send(
+          reply.substring(i, i + 1900)
+        );
+      }
+    }
+
+    console.log("✅ تم إرسال رد Gemini");
 
   } catch (error) {
-    console.error("❌ Gemini Error:", error);
+    console.error("❌ Gemini Error:");
+    console.error(error);
 
     await message.channel.send(
-      "❌ صار خطأ أثناء الاتصال بالذكاء الاصطناعي. حاول مرة ثانية."
+      "❌ صار خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من مفتاح Gemini وحاول مرة ثانية."
     );
   }
 });
+
+// =========================
+// Login
+// =========================
 
 client.login(process.env.DISCORD_TOKEN);
