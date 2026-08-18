@@ -9,28 +9,29 @@ const client = new Client({
     ]
 });
 
+// تهيئة مفتاح الذكاء الاصطناعي
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 client.once('ready', () => {
-    console.log(`Bot is online as ${client.user.tag}!`);
+    console.log(`البوت يعمل الآن: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    if (message.content) {
-        try {
-            message.channel.sendTyping();
-            
-            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-            const result = await model.generateContent(message.content);
-            const response = await result.response;
-            
-            await message.reply(response.text());
-        } catch (error) {
-            console.error(error);
-            await message.reply('عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.');
-        }
+    try {
+        message.channel.sendTyping();
+        
+        // استخدام gemini-pro وهو موديل عام ومستقر
+        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+        const result = await model.generateContent(message.content);
+        const response = await result.response;
+        const text = response.text();
+        
+        await message.reply(text);
+    } catch (error) {
+        console.error('خطأ في الذكاء الاصطناعي:', error);
+        await message.reply('عذراً، لا أستطيع الرد حالياً، تأكدي من مفتاح API في إعدادات ريلواي.');
     }
 });
 
