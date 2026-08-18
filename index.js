@@ -9,7 +9,7 @@ const client = new Client({
 });
 
 client.once('ready', () => {
-    console.log(`بوت DeepSeek يعمل الآن كـ: ${client.user.tag}`);
+    console.log(`Bot is ready: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async message => {
@@ -18,8 +18,7 @@ client.on('messageCreate', async message => {
     try {
         await message.channel.sendTyping();
 
-        // إرسال الطلب مباشرة إلى خادم DeepSeek
-        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        const response = await fetch('https://api.deepseek.com/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -27,25 +26,22 @@ client.on('messageCreate', async message => {
             },
             body: JSON.stringify({
                 model: 'deepseek-chat',
-                messages: [
-                    { role: 'user', content: message.content }
-                ],
+                messages: [{ role: 'user', content: message.content }],
                 stream: false
             })
         });
 
         const data = await response.json();
-        
+
         if (data.choices && data.choices.length > 0) {
-            const replyText = data.choices[0].message.content;
-            await message.reply(replyText);
-        } else {
-            await message.reply('عذراً، لم أتمكن من الحصول على رد من DeepSeek.');
+            await message.reply(data.choices[0].message.content);
+        } else if (data.error) {
+            await message.reply('خطأ من دييب سيك: ' + data.error.message);
+        } else {لم أتمكن من الرد');
         }
 
-    } catch (error) {
-        console.error('خطأ في الاتصال:', error);
-        await message.reply('عذراً، حدث خطأ أثناء الاتصال بخادم الذكاء الاصطناعي.');
+    } catch (err) {
+        await message.reply('حدث خطأ في الاتصال.');
     }
 });
 
