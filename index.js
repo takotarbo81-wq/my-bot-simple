@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { GoogleGenAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// تهيئة بوت الديسكورد
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -10,8 +9,7 @@ const client = new Client({
     ]
 });
 
-// تهيئة جوجل جيميني بالشكل الصحيح
-const ai = new GoogleGenAI({});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 client.once('ready', () => {
     console.log(`Bot is online as ${client.user.tag}!`);
@@ -24,13 +22,11 @@ client.on('messageCreate', async message => {
         try {
             message.channel.sendTyping();
             
-            // استدعاء الموديل بالطريقة الرسمية الصحيحة
-            const response = await ai.models.generateContent({
-                model: 'gemini-1.5-flash',
-                contents: message.content,
-            });
-
-            await message.reply(response.text);
+            const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+            const result = await model.generateContent(message.content);
+            const response = await result.response;
+            
+            await message.reply(response.text());
         } catch (error) {
             console.error(error);
             await message.reply('عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.');
