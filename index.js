@@ -16,17 +16,28 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-const DEEPSEEK_API = "https://api.deepseek.com/chat/completions";
+// ================================
+// إعدادات OpenAI
+// ================================
+const OPENAI_API_URL = "https://api.openai.com/v1/responses";
+const OPENAI_MODEL = "gpt-5.6";
 
+// ================================
+// تشغيل البوت
+// ================================
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log("🤖 OpenAI AI Support Bot is online!");
 });
 
+// ================================
+// رسائل التكتات
+// ================================
 client.on("messageCreate", async (message) => {
   // تجاهل رسائل البوتات
   if (message.author.bot) return;
 
-  // فقط داخل التكتات
+  // التأكد أن الرسالة داخل تكت
   const isTicket =
     message.channel.type === ChannelType.GuildText &&
     (
@@ -36,53 +47,93 @@ client.on("messageCreate", async (message) => {
 
   if (!isTicket) return;
 
-  // إذا الرسالة فاضية
-  if (!message.content.trim()) return;
+  // تجاهل الرسائل الفارغة
+  const userMessage = message.content.trim();
+  if (!userMessage) return;
 
   try {
+    // إظهار أن البوت يكتب
     await message.channel.sendTyping();
 
-    const response = await fetch(DEEPSEEK_API, {
+    // التأكد من وجود مفتاح OpenAI
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("❌ OPENAI_API_KEY غير موجود!");
+      return message.reply(
+        "❌ البوت غير متصل بالذكاء الاصطناعي. تأكد من إعداد OPENAI_API_KEY."
+      );
+    }
+
+    // إرسال الطلب إلى OpenAI
+    const response = await fetch(OPENAI_API_URL, {
       method: "POST",
+
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
+
       body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content:
-              "أنت موظف دعم فني داخل سيرفر Discord. أجب بالعربية بشكل مختصر وواضح وودود. إذا لم تعرف الإجابة، قل إنك تحتاج إلى تدخل الإدارة ولا تخترع معلومات.",
-          },
-          {
-            role: "user",
-            content: message.content,
-          },
-        ],
-        temperature: 0.7,
-        max_tokens: 500,
+        model: OPENAI_MODEL,
+
+        instructions:
+          "أنت موظف دعم فني داخل سيرفر Discord. " +
+          "أجب بالعربية بشكل مختصر وواضح وودود. " +
+          "ساعد المستخدم في حل مشكلته. " +
+          "إذا لم تعرف الإجابة، قل إنك تحتاج إلى تدخل الإدارة ولا تخترع معلومات.",
+
+        input: userMessage,
+
+        max_output_tokens: 500,
       }),
     });
 
+    // إذا OpenAI رجع خطأ
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("DeepSeek API Error:", errorText);
-      return message.reply("❌ صار خطأ في الاتصال بالذكاء الاصطناعي.");
+
+      console.error("❌ OpenAI API Error:");
+      console.error(errorText);
+
+      return message.reply(
+        "❌ صار خطأ في الاتصال بالذكاء الاصطناعي."
+      );
     }
 
+    // تحويل الرد إلى JSON
     const data = await response.json();
 
+    // استخراج النص
     const reply =
-      data?.choices?.[0]?.message?.content ||
+      data.output_text ||
       "❌ ما قدرت أطلع رد حاليًا.";
 
-    await message.reply(reply);
+    // Discord يسمح بحد أقصى 2000 حرف للرسالة
+    const chunks = [];
+
+    for (let i = 0; i < reply.length; i += 1900) {
+      chunks.push(reply.substring(i, i + 1900));
+    }
+
+    // إرسال الرد
+    for (const chunk of chunks) {
+      await message.reply(chunk);
+    }
+
   } catch (error) {
-    console.error("Bot Error:", error);
-    await message.reply("❌ صار خطأ، حاول مرة ثانية.");
+    console.error("❌ Bot Error:", error);
+
+    await message.reply(
+      "❌ صار خطأ، حاول مرة ثانية."
+    );
   }
 });
+
+// ================================
+// تسجيل دخول Discord
+// ================================
+if (!process.env.DISCORD_TOKEN) {
+  console.error("❌ DISCORD_TOKEN غير موجود!");
+  process.exit(1);
+}
 
 client.login(process.env.DISCORD_TOKEN);
