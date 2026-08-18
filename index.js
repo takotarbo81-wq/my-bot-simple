@@ -18,15 +18,14 @@ client.on('messageCreate', async message => {
     try {
         await message.channel.sendTyping();
 
-        // استخدام أحدث رابط Endpoint رسمي وثابت لـ Gemini
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 contents: [{
-                    parts: [{ text: "أنت مساعد ذكي ومحترف لخدمة العملاء والدعم الفني في سيرفر ديسكورد. أجب على السؤال التالي بشكل مفيد ومباشر وبطريقة لطيفة: " + message.content }]
+                    parts: [{ text: "أنت مساعد دعم فني ذكي لخدمة العملاء والتكتات في ديسكورد. أجب بوضوح ولطف واختصار: " + message.content }]
                 }]
             })
         });
@@ -38,7 +37,7 @@ client.on('messageCreate', async message => {
         } else if (data.error) {
             await message.reply('خطأ من الذكاء الاصطناعي: ' + data.error.message);
         } else {
-            await message.reply('عذراً، لم أتمكن من معالجة الرد.');
+            await message.reply('عذراً، لم أتمكن من الرد.');
         }
 
     } catch (err) {
