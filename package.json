@@ -1,14 +1,11 @@
 {
-  "name": "my-bot-simple",
+  "name": "my-bot-deepseek",
   "version": "1.0.0",
-  "description": "Discord bot with Google Gemini",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "@google/generative-ai": "^0.1.1"
+    "discord.js": "^14.14.1"
   }
 }
-
