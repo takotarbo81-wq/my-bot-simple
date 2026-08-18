@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const client = new Client({
     intents: [
@@ -9,29 +8,44 @@ const client = new Client({
     ]
 });
 
-// تهيئة مفتاح الذكاء الاصطناعي
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 client.once('ready', () => {
-    console.log(`البوت يعمل الآن: ${client.user.tag}`);
+    console.log(`بوت DeepSeek يعمل الآن كـ: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     try {
-        message.channel.sendTyping();
+        await message.channel.sendTyping();
+
+        // إرسال الطلب مباشرة إلى خادم DeepSeek
+        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'deepseek-chat',
+                messages: [
+                    { role: 'user', content: message.content }
+                ],
+                stream: false
+            })
+        });
+
+        const data = await response.json();
         
-        // استخدام gemini-pro وهو موديل عام ومستقر
-        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-        const result = await model.generateContent(message.content);
-        const response = await result.response;
-        const text = response.text();
-        
-        await message.reply(text);
+        if (data.choices && data.choices.length > 0) {
+            const replyText = data.choices[0].message.content;
+            await message.reply(replyText);
+        } else {
+            await message.reply('عذراً، لم أتمكن من الحصول على رد من DeepSeek.');
+        }
+
     } catch (error) {
-        console.error('خطأ في الذكاء الاصطناعي:', error);
-        await message.reply('عذراً، لا أستطيع الرد حالياً، تأكدي من مفتاح API في إعدادات ريلواي.');
+        console.error('خطأ في الاتصال:', error);
+        await message.reply('عذراً، حدث خطأ أثناء الاتصال بخادم الذكاء الاصطناعي.');
     }
 });
 
