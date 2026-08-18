@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const client = new Client({
     intents: [
@@ -7,6 +8,8 @@ const client = new Client({
         GatewayIntentBits.MessageContent
     ]
 });
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 client.once('ready', () => {
     console.log(`Bot Ready: ${client.user.tag}`);
@@ -17,32 +20,15 @@ client.on('messageCreate', async message => {
 
     try {
         await message.channel.sendTyping();
-
-        // استخدام اسم الموديل الأساسي المعتمد في Groq
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: 'llama3-8b',
-                messages: [{ role: 'user', content: message.content }]
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.choices && data.choices[0]) {
-            await message.reply(data.choices[0].message.content);
-        } else if (data.error) {
-            await message.reply('خطأ من Groq: ' + data.error.message);
-        } else {
-            await message.reply('لم يتم الرد.');
-        }
-
-    } catch (err) {
-        await message.reply('خطأ في الاتصال: ' + err.message);
+        
+        // استخدام الموديل القياسي والمباشر
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const result = await model.generateContent(message.content);
+        const response = await result.response;
+        
+        await message.reply(response.text());
+    } catch (error) {
+        await message.reply('خطأ: ' + error.message);
     }
 });
 
