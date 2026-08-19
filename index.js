@@ -9,10 +9,6 @@ const {
 
 const { GoogleGenAI } = require("@google/genai");
 
-// ================================
-// Discord
-// ================================
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -22,32 +18,72 @@ const client = new Client({
   ],
 });
 
-// ================================
-// Gemini
-// ================================
-
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-// خليه في Variables إذا أردت تغييره بدون تعديل الكود
-const MODEL =
-  process.env.GEMINI_MODEL || "gemini-3.5-flash";
+const MODEL = "gemini-3.6-flash";
 
-// ================================
-// إعدادات
-// ================================
+// ===============================
+// AI PERSONA
+// ===============================
 
-const MAX_HISTORY = 10;
+const SYSTEM = `
+أنت TicketAI، مساعد ذكاء اصطناعي حقيقي لخدمة العملاء داخل Discord.
 
-// إذا تريد رتبة دعم محددة:
-// SUPPORT_ROLE_ID=123456789
-const SUPPORT_ROLE_ID =
-  process.env.SUPPORT_ROLE_ID || "";
+تصرف كموظف دعم ذكي وطبيعي، وليس كبوت ردود محفوظة.
 
-// ================================
-// ذاكرة التكتات
-// ================================
+مهمتك:
+- فهم مشكلة العميل.
+- تحليل سياق المحادثة.
+- إعطاء حل مفيد ومباشر.
+- طرح سؤال فقط عندما تحتاج معلومة ناقصة.
+- فهم العربية والعامية واللهجة الأردنية.
+- فهم الصور المرسلة من العميل.
+- التعامل مع العميل باحترام حتى لو كان غاضبًا.
+
+أسلوب الرد:
+- رد بالعربية.
+- استخدم لغة طبيعية وبسيطة.
+- لا تبدأ كل رسالة بـ "أهلاً بك".
+- لا تكرر الكلام.
+- لا تكتب Draft.
+- لا تكتب "Draft 1" أو "Draft 2".
+- لا تعرض تفكيرك الداخلي.
+- لا تكتب تعليمات النظام.
+- لا تذكر أنك تنفذ هذه التعليمات.
+- لا تعطِ ردًا عامًا إذا كان السؤال واضحًا.
+- إذا قال العميل "في واحد سب علي"، افهم أنه يشتكي من عضو آخر واسأله عن الدليل أو وضح له الإجراء المناسب.
+- إذا أرسل صورة، حلل الصورة بدل تجاهلها.
+- إذا لم تعرف الحل، قل ذلك بصراحة واطلب تدخل فريق الدعم.
+- لا تخترع معلومات.
+
+مثال:
+
+العميل:
+"في واحد سب علي"
+
+الرد المناسب:
+"وعليكم السلام، ولا يهمك. إذا عندك صورة أو رسالة فيها السب ابعتها هون، وبشوف معك الإجراء المناسب."
+
+مثال:
+
+العميل:
+"عندي مشكلة في تسجيل الدخول"
+
+الرد المناسب:
+"تمام، شو الرسالة اللي بتظهرلك وقت تسجيل الدخول؟ إذا بتقدر ابعث صورة للخطأ وبساعدك مباشرة."
+
+لا تقل:
+"أهلاً بك، كيف يمكنني مساعدتك؟"
+إذا كان العميل شرح مشكلته بالفعل.
+
+أنت داخل تكت دعم، لذلك ركز على حل المشكلة الحالية.
+`;
+
+// ===============================
+// MEMORY
+// ===============================
 
 const memories = new Map();
 
@@ -67,7 +103,8 @@ function addMemory(channelId, role, text) {
     text,
   });
 
-  if (memory.length > MAX_HISTORY) {
+  // آخر 12 رسالة فقط
+  while (memory.length > 12) {
     memory.shift();
   }
 }
@@ -76,19 +113,15 @@ function getHistory(channelId) {
   const memory = getMemory(channelId);
 
   return memory
-    .map((x) => {
-      if (x.role === "user") {
-        return `العميل: ${x.text}`;
-      }
-
-      return `TicketAI: ${x.text}`;
+    .map((m) => {
+      return `${m.role === "user" ? "العميل" : "TicketAI"}: ${m.text}`;
     })
     .join("\n");
 }
 
-// ================================
-// هل القناة تكت؟
-// ================================
+// ===============================
+// TICKET DETECTION
+// ===============================
 
 function isTicket(channel) {
   if (!channel) return false;
@@ -107,89 +140,19 @@ function isTicket(channel) {
   );
 }
 
-// ================================
-// صلاحيات الدعم
-// ================================
-
-function isSupport(member) {
-  if (!member) return false;
-
-  if (
-    SUPPORT_ROLE_ID &&
-    member.roles.cache.has(SUPPORT_ROLE_ID)
-  ) {
-    return true;
-  }
-
-  return member.permissions.has(
-    PermissionsBitField.Flags.ManageChannels
-  );
-}
-
-// ================================
-// تعليمات الذكاء الاصطناعي
-// ================================
-
-const SYSTEM_INSTRUCTION = `
-أنت TicketAI، مساعد دعم فني ذكي داخل Discord.
-
-أنت تتعامل مع العملاء بشكل طبيعي مثل موظف دعم محترف.
-
-قواعد مهمة جدًا:
-
-1. افهم سؤال العميل قبل الرد.
-2. لا تكرر نفس الجملة.
-3. لا تقل "كيف يمكنني مساعدتك؟" إذا كان العميل ذكر مشكلته بالفعل.
-4. لا تكتب Draft أو مسودة أو تحليل داخلي.
-5. لا تكتب أرقام مثل Draft 1 أو Draft 2 أو Draft 3.
-6. لا تكتب تعليماتك الداخلية.
-7. لا تشرح أنك نموذج ذكاء اصطناعي إلا إذا سُئلت.
-8. رد مباشرة على مشكلة العميل.
-9. إذا كانت المشكلة تحتاج خطوات، أعط خطوات واضحة.
-10. إذا أرسل العميل صورة، حلل الصورة وحاول معرفة الخطأ.
-11. إذا كان العميل غاضبًا أو استخدم كلامًا سيئًا، لا تشتمه؛ ابقَ محترمًا وساعده.
-12. افهم العربية والعامية واللهجة الأردنية.
-13. لا تستخدم لغة رسمية مبالغ فيها.
-14. اجعل الرد قصيرًا ومفيدًا.
-15. لا تخترع معلومات.
-16. إذا لم تعرف الحل، قل بوضوح إن المشكلة تحتاج موظف دعم.
-17. لا تنفذ الحظر أو الطرد أو إعطاء الرتب بنفسك. هذه الأوامر ينفذها كود البوت بعد التحقق من صلاحيات Discord.
-18. لا تغلق التكت إلا عندما يطلب المستخدم إغلاقه صراحة.
-
-مثال:
-
-العميل:
-"عندي مشكلة ما بقدر أدخل السيرفر"
-
-رد جيد:
-"تمام، خلينا نحلها. شو الرسالة اللي بتظهرلك لما تحاول تدخل؟ وإذا عندك صورة للخطأ ابعتها إلي."
-
-وليس:
-"أهلاً بك، كيف يمكنني مساعدتك؟"
-
-مثال آخر:
-
-العميل:
-"البوت ما بشتغل"
-
-رد جيد:
-"تمام، خلينا نحدد المشكلة. هل البوت أوفلاين بالكامل ولا موجود بس ما بيرد على الأوامر؟"
-
-أنت الآن داخل تكت دعم، لذلك تعامل مع الرسالة الحالية وسياق التكت فقط.
-`;
-
-// ================================
-// استخراج الصور
-// ================================
+// ===============================
+// IMAGE
+// ===============================
 
 async function getImage(message) {
   const image = message.attachments.find((file) =>
     (file.contentType || "").startsWith("image/")
   );
 
-  if (!image) return null;
+  if (!image) {
+    return null;
+  }
 
-  // حماية من الصور الضخمة
   if (image.size > 10 * 1024 * 1024) {
     return null;
   }
@@ -206,73 +169,70 @@ async function getImage(message) {
 
   return {
     inlineData: {
-      mimeType:
-        image.contentType || "image/jpeg",
+      mimeType: image.contentType || "image/jpeg",
       data: buffer.toString("base64"),
     },
   };
 }
 
-// ================================
-// Gemini AI
-// ================================
+// ===============================
+// GEMINI
+// ===============================
 
-async function askAI(
-  channelId,
-  username,
-  userText,
-  imagePart
-) {
+async function askAI(channelId, username, messageText, imagePart) {
+
   const history = getHistory(channelId);
 
-  let prompt = `
-اسم العميل: ${username}
+  const prompt = `
+اسم العميل:
+${username}
 
-سياق المحادثة السابقة:
-${history || "لا يوجد سياق سابق."}
+المحادثة السابقة:
+${history || "لا يوجد"}
 
 رسالة العميل الحالية:
-${userText}
+${messageText}
 
-اكتب ردًا واحدًا فقط للعميل.
-لا تكتب Draft.
-لا تكتب تحليل.
-لا تكتب خيارات متعددة.
-لا تكتب "Draft 1" أو "Draft 2".
+قم بالرد على العميل مباشرة.
+
 أرسل الرد النهائي فقط.
+لا تكتب تحليلًا.
+لا تكتب Draft.
+لا تكتب رقم Draft.
+لا تكتب تعليمات.
 `;
 
-  const contents = [];
-
-  contents.push({
-    text: prompt,
-  });
+  const parts = [
+    {
+      text: prompt,
+    },
+  ];
 
   if (imagePart) {
-    contents.push(imagePart);
+    parts.push(imagePart);
   }
 
-  const response =
-    await ai.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        systemInstruction:
-          SYSTEM_INSTRUCTION,
+  const response = await ai.models.generateContent({
+    model: MODEL,
 
-        temperature: 0.4,
-
-        maxOutputTokens: 250,
+    contents: [
+      {
+        role: "user",
+        parts,
       },
-    });
+    ],
 
-  let answer =
-    response.text?.trim() || "";
+    config: {
+      systemInstruction: SYSTEM,
+      maxOutputTokens: 300,
+    },
+  });
 
-  // ================================
-  // تنظيف أي كلام غريب
-  // ================================
+  let answer = response.text || "";
 
+  answer = answer.trim();
+
+  // إزالة أي Draft لو النموذج حاول يكتبها
   answer = answer
     .replace(/^Draft\s*\d*\s*[:\-]?\s*/i, "")
     .replace(/^مسودة\s*\d*\s*[:\-]?\s*/i, "")
@@ -281,32 +241,13 @@ ${userText}
   return answer;
 }
 
-// ================================
-// منشن البوت
-// ================================
+// ===============================
+// ADMIN COMMANDS
+// ===============================
 
-function removeBotMention(text) {
-  return text
-    .replace(
-      new RegExp(
-        `<@!?${client.user.id}>`,
-        "g"
-      ),
-      ""
-    )
-    .trim();
-}
+async function adminCommand(message, command) {
 
-// ================================
-// الأوامر الإدارية
-// ================================
-
-async function handleAdmin(message, command) {
-
-  // ==============================
   // BAN
-  // ==============================
-
   if (/^(احظر|حظر|ban)\b/i.test(command)) {
 
     if (
@@ -314,32 +255,26 @@ async function handleAdmin(message, command) {
         PermissionsBitField.Flags.BanMembers
       )
     ) {
-      await message.reply(
-        "❌ ما عندك صلاحية الحظر."
-      );
+      await message.reply("❌ ما عندك صلاحية الحظر.");
       return true;
     }
 
-    const member =
-      message.mentions.members.first();
+    const member = message.mentions.members.first();
 
     if (!member) {
-      await message.reply(
-        "❌ منشن الشخص الذي تريد حظره."
-      );
+      await message.reply("❌ منشن العضو.");
       return true;
     }
 
     if (!member.bannable) {
       await message.reply(
-        "❌ ما أقدر أحظر هذا الشخص. تأكد أن رتبة البوت أعلى من رتبته."
+        "❌ ما أقدر أحظر هذا العضو. تأكد أن رتبة البوت أعلى من رتبته."
       );
       return true;
     }
 
     await member.ban({
-      reason:
-        `By ${message.author.tag}`,
+      reason: `Ban by ${message.author.tag}`,
     });
 
     await message.reply(
@@ -349,10 +284,7 @@ async function handleAdmin(message, command) {
     return true;
   }
 
-  // ==============================
   // KICK
-  // ==============================
-
   if (/^(اطرد|طرد|kick)\b/i.test(command)) {
 
     if (
@@ -360,31 +292,26 @@ async function handleAdmin(message, command) {
         PermissionsBitField.Flags.KickMembers
       )
     ) {
-      await message.reply(
-        "❌ ما عندك صلاحية الطرد."
-      );
+      await message.reply("❌ ما عندك صلاحية الطرد.");
       return true;
     }
 
-    const member =
-      message.mentions.members.first();
+    const member = message.mentions.members.first();
 
     if (!member) {
-      await message.reply(
-        "❌ منشن الشخص الذي تريد طرده."
-      );
+      await message.reply("❌ منشن العضو.");
       return true;
     }
 
     if (!member.kickable) {
       await message.reply(
-        "❌ ما أقدر أطرد هذا الشخص."
+        "❌ ما أقدر أطرد هذا العضو."
       );
       return true;
     }
 
     await member.kick(
-      `By ${message.author.tag}`
+      `Kick by ${message.author.tag}`
     );
 
     await message.reply(
@@ -397,269 +324,243 @@ async function handleAdmin(message, command) {
   return false;
 }
 
-// ================================
-// الرسائل
-// ================================
+// ===============================
+// MESSAGE
+// ===============================
 
-client.on(
-  "messageCreate",
-  async (message) => {
+client.on("messageCreate", async (message) => {
 
-    try {
+  try {
 
-      if (message.author.bot) return;
-      if (!message.guild) return;
+    if (message.author.bot) {
+      return;
+    }
 
-      const text =
-        message.content.trim();
+    if (!message.guild) {
+      return;
+    }
 
-      // ==============================
-      // أوامر الإدارة عند منشن البوت
-      // ==============================
+    const text = message.content.trim();
 
-      if (
-        message.mentions.has(client.user)
-      ) {
+    // =============================
+    // ADMIN VIA BOT MENTION
+    // =============================
 
-        const command =
-          removeBotMention(text);
+    if (message.mentions.has(client.user)) {
 
-        const executed =
-          await handleAdmin(
-            message,
-            command
-          );
+      const command = text
+        .replace(
+          new RegExp(
+            `<@!?${client.user.id}>`,
+            "g"
+          ),
+          ""
+        )
+        .trim();
 
-        if (executed) return;
-      }
+      const executed = await adminCommand(
+        message,
+        command
+      );
 
-      // ==============================
-      // AI داخل التكت
-      // ==============================
-
-      if (!isTicket(message.channel)) {
+      if (executed) {
         return;
       }
+    }
 
-      // ==============================
-      // إغلاق التكت
-      // ==============================
+    // =============================
+    // ONLY TICKETS
+    // =============================
 
-      const lower =
-        text.toLowerCase();
+    if (!isTicket(message.channel)) {
+      return;
+    }
 
-      const closeWords = [
-        "أغلق التكت",
-        "اغلق التكت",
-        "اقفل التكت",
-        "أقفل التكت",
-        "سكر التكت",
-        "close ticket",
-      ];
+    // =============================
+    // CLOSE
+    // =============================
 
-      if (
-        closeWords.some((word) =>
-          lower.includes(
-            word.toLowerCase()
-          )
-        )
-      ) {
+    const lower = text.toLowerCase();
 
-        if (!isSupport(message.member)) {
-          await message.reply(
-            "❌ إغلاق التكت متاح لفريق الدعم فقط."
-          );
-          return;
-        }
+    const closeWords = [
+      "اغلق التكت",
+      "أغلق التكت",
+      "اقفل التكت",
+      "أقفل التكت",
+      "سكر التكت",
+      "close ticket",
+    ];
 
-        await message.reply(
-          "🔒 تمام، سيتم إغلاق التكت..."
+    if (
+      closeWords.some((word) =>
+        lower.includes(word.toLowerCase())
+      )
+    ) {
+
+      const canClose =
+        message.member.permissions.has(
+          PermissionsBitField.Flags.ManageChannels
         );
 
-        setTimeout(async () => {
-          try {
-            await message.channel.delete(
-              "Ticket closed"
-            );
-          } catch {}
-        }, 2000);
-
-        return;
-      }
-
-      // ==============================
-      // حفظ رسالة العميل
-      // ==============================
-
-      const displayText =
-        text ||
-        "[العميل أرسل صورة]";
-
-      addMemory(
-        message.channel.id,
-        "user",
-        displayText
-      );
-
-      // ==============================
-      // مؤشر الكتابة
-      // ==============================
-
-      message.channel
-        .sendTyping()
-        .catch(() => {});
-
-      // ==============================
-      // الصورة
-      // ==============================
-
-      let imagePart = null;
-
-      if (message.attachments.size > 0) {
-        try {
-          imagePart =
-            await getImage(message);
-        } catch (error) {
-          console.log(
-            "Image error:",
-            error.message
-          );
-        }
-      }
-
-      // ==============================
-      // استدعاء AI
-      // ==============================
-
-      const answer =
-        await askAI(
-          message.channel.id,
-          message.author.username,
-          displayText,
-          imagePart
+      if (!canClose) {
+        await message.reply(
+          "❌ إغلاق التكت لفريق الدعم فقط."
         );
-
-      if (!answer) return;
-
-      // ==============================
-      // إرسال الرد
-      // ==============================
-
-      const finalAnswer =
-        answer.length > 1900
-          ? answer.substring(0, 1900) + "..."
-          : answer;
-
-      await message.reply({
-        content: finalAnswer,
-
-        allowedMentions: {
-          repliedUser: false,
-        },
-      });
-
-      // ==============================
-      // حفظ رد AI
-      // ==============================
-
-      addMemory(
-        message.channel.id,
-        "assistant",
-        finalAnswer
-      );
-
-    } catch (error) {
-
-      console.error(
-        "AI ERROR:",
-        error
-      );
-
-      const errorText =
-        String(
-          error?.message || error
-        ).toLowerCase();
-
-      if (
-        errorText.includes("429") ||
-        errorText.includes("quota") ||
-        errorText.includes(
-          "resource_exhausted"
-        )
-      ) {
-
-        await message.reply(
-          "⏳ الذكاء الاصطناعي مشغول حاليًا، حاول بعد لحظات."
-        ).catch(() => {});
-
-        return;
-      }
-
-      if (
-        errorText.includes("api key") ||
-        errorText.includes("401") ||
-        errorText.includes("403")
-      ) {
-
-        await message.reply(
-          "❌ مشكلة في مفتاح Gemini API."
-        ).catch(() => {});
-
         return;
       }
 
       await message.reply(
-        "❌ صار خطأ مؤقت بالذكاء الاصطناعي."
-      ).catch(() => {});
+        "🔒 تمام، سيتم إغلاق التكت..."
+      );
+
+      setTimeout(async () => {
+        try {
+          await message.channel.delete(
+            "Ticket closed"
+          );
+        } catch {}
+      }, 2000);
+
+      return;
     }
+
+    // =============================
+    // SAVE MESSAGE
+    // =============================
+
+    const userText =
+      text || "[العميل أرسل صورة]";
+
+    addMemory(
+      message.channel.id,
+      "user",
+      userText
+    );
+
+    // =============================
+    // TYPING
+    // =============================
+
+    message.channel
+      .sendTyping()
+      .catch(() => {});
+
+    // =============================
+    // IMAGE
+    // =============================
+
+    let imagePart = null;
+
+    if (message.attachments.size > 0) {
+      try {
+        imagePart = await getImage(message);
+      } catch (error) {
+        console.log(
+          "Image error:",
+          error.message
+        );
+      }
+    }
+
+    // =============================
+    // AI
+    // =============================
+
+    const answer = await askAI(
+      message.channel.id,
+      message.author.username,
+      userText,
+      imagePart
+    );
+
+    if (!answer) {
+      return;
+    }
+
+    // Discord limit
+    const finalAnswer =
+      answer.length > 1900
+        ? answer.slice(0, 1900) + "..."
+        : answer;
+
+    await message.reply({
+      content: finalAnswer,
+      allowedMentions: {
+        repliedUser: false,
+      },
+    });
+
+    // =============================
+    // SAVE AI
+    // =============================
+
+    addMemory(
+      message.channel.id,
+      "assistant",
+      finalAnswer
+    );
+
+  } catch (error) {
+
+    console.error(
+      "BOT ERROR:",
+      error
+    );
+
+    const errorText =
+      String(error?.message || error)
+        .toLowerCase();
+
+    if (
+      errorText.includes("429") ||
+      errorText.includes("quota") ||
+      errorText.includes("resource_exhausted")
+    ) {
+      await message.reply(
+        "⏳ Gemini مشغول حاليًا، حاول بعد لحظات."
+      ).catch(() => {});
+
+      return;
+    }
+
+    if (
+      errorText.includes("api key") ||
+      errorText.includes("401") ||
+      errorText.includes("403")
+    ) {
+      await message.reply(
+        "❌ مفتاح Gemini API فيه مشكلة."
+      ).catch(() => {});
+
+      return;
+    }
+
+    await message.reply(
+      "❌ صار خطأ مؤقت، حاول مرة ثانية."
+    ).catch(() => {});
   }
-);
+});
 
-// ================================
-// تشغيل البوت
-// ================================
+// ===============================
+// READY
+// ===============================
 
-client.once(
-  "ready",
-  () => {
+client.once("ready", () => {
 
-    console.log(
-      "================================"
-    );
+  console.log("==============================");
+  console.log("🤖 TicketAI ONLINE");
+  console.log(`👤 ${client.user.tag}`);
+  console.log(`🧠 ${MODEL}`);
+  console.log("🎫 Tickets: ON");
+  console.log("🖼️ Images: ON");
+  console.log("🔨 Moderation: ON");
+  console.log("==============================");
 
-    console.log(
-      `✅ TicketAI Online: ${client.user.tag}`
-    );
+});
 
-    console.log(
-      `🧠 Gemini Model: ${MODEL}`
-    );
-
-    console.log(
-      "🎫 Ticket AI: ON"
-    );
-
-    console.log(
-      "🖼️ Image Understanding: ON"
-    );
-
-    console.log(
-      "🔨 Moderation: ON"
-    );
-
-    console.log(
-      "⚡ AI Support: ON"
-    );
-
-    console.log(
-      "================================"
-    );
-  }
-);
-
-// ================================
-// حماية البوت من التوقف
-// ================================
+// ===============================
+// ERRORS
+// ===============================
 
 process.on(
   "unhandledRejection",
@@ -681,15 +582,14 @@ process.on(
   }
 );
 
-// ================================
-// التحقق من المفاتيح
-// ================================
+// ===============================
+// ENV
+// ===============================
 
 if (!process.env.DISCORD_TOKEN) {
   console.error(
     "❌ DISCORD_TOKEN غير موجود"
   );
-
   process.exit(1);
 }
 
@@ -697,14 +597,7 @@ if (!process.env.GEMINI_API_KEY) {
   console.error(
     "❌ GEMINI_API_KEY غير موجود"
   );
-
   process.exit(1);
 }
 
-// ================================
-// Login
-// ================================
-
-client.login(
-  process.env.DISCORD_TOKEN
-);
+//
