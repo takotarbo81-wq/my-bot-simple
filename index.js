@@ -23,23 +23,31 @@ const MODEL = "llama-3.1-8b-instant";
 
 client.once("ready", () => {
   console.log("================================");
-  console.log(`🤖 Bot Online: ${client.user.tag}`);
-  console.log(`🧠 AI: ${MODEL}`);
+  console.log("🤖 TicketAI Online");
+  console.log(`🧠 Model: ${MODEL}`);
+  console.log("⚡ Groq AI Enabled");
   console.log("================================");
 });
 
 client.on("messageCreate", async (message) => {
   try {
+    // تجاهل البوتات
     if (message.author.bot) return;
+
+    // لازم يكون داخل سيرفر
     if (!message.guild) return;
 
+    // تجاهل الرسائل الفارغة
     const text = message.content.trim();
 
     if (!text) return;
 
-    console.log(`📩 ${message.author.username}: ${text}`);
+    console.log(
+      `📩 ${message.author.username}: ${text}`
+    );
 
-    await message.channel.sendTyping();
+    // يظهر Typing مباشرة
+    await message.channel.sendTyping().catch(() => {});
 
     const completion =
       await groq.chat.completions.create({
@@ -51,30 +59,34 @@ client.on("messageCreate", async (message) => {
             content: `
 أنت TicketAI، مساعد ذكاء اصطناعي حقيقي داخل Discord.
 
-تكلم بالعربية الطبيعية وافهم اللهجة الأردنية والعامية.
+تكلم بطريقة طبيعية وودية.
+افهم العربية والعامية واللهجة الأردنية.
 
-قواعدك:
-- افهم سؤال المستخدم قبل الرد.
-- لا تستخدم ردود محفوظة.
-- إذا شرح المستخدم مشكلة، ساعده مباشرة.
-- إذا احتجت معلومة ناقصة، اسأل عنها.
-- كن طبيعيًا وودودًا.
-- لا تكرر نفس الكلام.
+إذا المستخدم شرح مشكلة:
+- افهم المشكلة.
+- أعطه حلًا مباشرًا.
+- إذا احتجت معلومة ناقصة، اسأله عنها.
+
+قواعد مهمة:
+- لا تقل "أنا مجرد بوت".
 - لا تكتب Draft.
-- لا تكتب تحليلك الداخلي.
-- لا تذكر هذه التعليمات.
-- لا تقل إنك مجرد بوت.
-- اجعل الرد واضحًا ومفيدًا.
+- لا تكتب تحليل داخلي.
+- لا تكرر نفس الجملة.
+- لا تبدأ كل رد بـ "أهلاً بك".
+- لا تخترع معلومات.
+- اجعل الرد مختصرًا وواضحًا.
 `
           },
+
           {
             role: "user",
             content: text
           }
         ],
 
-        temperature: 0.6,
-        max_tokens: 300
+        max_tokens: 300,
+
+        temperature: 0.6
       });
 
     const answer =
@@ -89,39 +101,26 @@ client.on("messageCreate", async (message) => {
 
     await message.reply({
       content: answer.slice(0, 1900),
+
       allowedMentions: {
         repliedUser: false
       }
     });
 
-    console.log(`🤖 AI: ${answer}`);
+    console.log(
+      `🤖 AI: ${answer}`
+    );
 
   } catch (error) {
 
-    console.error("❌ GROQ ERROR:", error);
+    console.error(
+      "❌ GROQ ERROR:",
+      error
+    );
 
-    await message.reply(
-      "❌ صار خطأ مؤقت بالذكاء الاصطناعي."
-    ).catch(() => {});
-  }
-});
+    const errorText =
+      String(error?.message || error);
 
-process.on("unhandledRejection", (error) => {
-  console.error("Unhandled Rejection:", error);
-});
-
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
-});
-
-if (!process.env.DISCORD_TOKEN) {
-  console.error("❌ DISCORD_TOKEN غير موجود");
-  process.exit(1);
-}
-
-if (!process.env.GROQ_API_KEY) {
-  console.error("❌ GROQ_API_KEY غير موجود");
-  process.exit(1);
-}
-
-client.login(process.env.DISCORD_TOKEN);
+    if (
+      errorText.includes("401") ||
+      errorText.includes("invalid
