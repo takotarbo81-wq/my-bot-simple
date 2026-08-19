@@ -1,647 +1,248 @@
+require("dotenv").config();
+
 const {
   Client,
   GatewayIntentBits,
   PermissionsBitField,
-  ChannelType,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder
+  ChannelType
 } = require("discord.js");
 
 const { GoogleGenAI } = require("@google/genai");
-require("dotenv").config();
 
-// ==================================================
+// =========================
 // الإعدادات
-// ==================================================
-
-// ID رتبة الإدارة
-const ADMIN_ROLE_ID = "ضع_ID_رتبة_الإدارة_هنا";
-
-// اسم البوت
-const BOT_NAME = "بوت دعم";
-
-// ==================================================
-// Gemini
-// ==================================================
-
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
-
-// ==================================================
-// Discord
-// ==================================================
+// =========================
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
   ]
 });
 
-// ==================================================
-// تعليمات Gemini
-// ==================================================
-
-const SYSTEM_PROMPT = `
-أنت بوت دعم فني احترافي داخل Discord.
-
-قواعدك:
-- رد باللغة العربية.
-- كن محترمًا وودودًا.
-- افهم مشكلة العميل قبل الإجابة.
-- أعطِ الحل مباشرة وباختصار.
-- لا تكرر الكلام.
-- إذا كانت المشكلة تحتاج تدخل موظف قل له ذلك.
-- لا تطلب كلمة مرور.
-- لا تطلب Discord Token.
-- لا تطلب API Key.
-- لا تخترع معلومات غير متأكد منها.
-- لا تغلق التكت بنفسك.
-- لا تنفذ أوامر الإدارة.
-- أوامر الإدارة يتم تنفيذها فقط بواسطة النظام البرمجي.
-`;
-
-// ==================================================
-// التحقق من رتبة الإدارة
-// ==================================================
-
-function isAdmin(member) {
-  if (!member) return false;
-
-  // Administrator دائمًا مسموح
-  if (
-    member.permissions.has(
-      PermissionsBitField.Flags.Administrator
-    )
-  ) {
-    return true;
-  }
-
-  // رتبة الإدارة
-  if (
-    ADMIN_ROLE_ID &&
-    ADMIN_ROLE_ID !== "ضع_ID_رتبة_الإدارة_هنا"
-  ) {
-    return member.roles.cache.has(ADMIN_ROLE_ID);
-  }
-
-  return false;
-}
-
-// ==================================================
-// هل هذه قناة تكت؟
-// ==================================================
-
-function isTicket(channel) {
-  if (!channel) return false;
-
-  if (channel.type !== ChannelType.GuildText) {
-    return false;
-  }
-
-  const name = channel.name.toLowerCase();
-
-  return (
-    name.startsWith("ticket-") ||
-    name.startsWith("claimed-") ||
-    name.includes("ticket") ||
-    name.includes("تكت")
-  );
-}
-
-// ==================================================
-// جاهزية البوت
-// ==================================================
-
-client.once("ready", () => {
-  console.log("================================");
-  console.log(`✅ ${BOT_NAME} شغال`);
-  console.log(`🤖 ${client.user.tag}`);
-  console.log("🧠 Gemini جاهز");
-  console.log("🎫 نظام التكت جاهز");
-  console.log("🛡️ نظام الإدارة جاهز");
-  console.log("⭐ نظام التقييم جاهز");
-  console.log("================================");
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY
 });
 
-// ==================================================
+const MODEL = "gemini-3.6-flash";
+
+// كلمات إغلاق التكت
+const CLOSE_WORDS = [
+  "اغلق",
+  "إغلاق",
+  "اغلاق",
+  "سكر التكت",
+  "سكر التكت",
+  "close",
+  "close ticket",
+  "اقفل",
+  "إقفل"
+];
+
+// =========================
+// تشغيل البوت
+// =========================
+
+client.once("ready", () => {
+  console.log(`✅ البوت اشتغل: ${client.user.tag}`);
+  console.log(`🤖 Gemini: ${MODEL}`);
+});
+
+// =========================
 // الرسائل
-// ==================================================
+// =========================
 
 client.on("messageCreate", async (message) => {
   try {
+    // تجاهل البوتات
     if (message.author.bot) return;
+
+    // لازم يكون داخل سيرفر
     if (!message.guild) return;
 
-    const text = message.content.trim();
+    // =========================
+    // إغلاق التكت
+    // =========================
 
-    if (!text) return;
+    const text = message.content.trim().toLowerCase();
 
-    // ==================================================
-    // أوامر الإدارة عن طريق منشن البوت
-    // ==================================================
+    const wantsClose = CLOSE_WORDS.some(word =>
+      text === word ||
+      text.includes(word)
+    );
 
-    if (message.mentions.has(client.user)) {
-
-      const command = text
-        .replace(
-          new RegExp(`<@!?${client.user.id}>`, "g"),
-          ""
+    if (
+      wantsClose &&
+      message.channel.type === ChannelType.GuildText &&
+      (
+        message.channel.name.startsWith("ticket-") ||
+        message.channel.name.startsWith("claimed-") ||
+        message.channel.name.includes("ticket")
+      )
+    ) {
+      // لازم المستخدم يكون عنده Manage Channels
+      if (
+        message.member.permissions.has(
+          PermissionsBitField.Flags.ManageChannels
         )
-        .trim();
+      ) {
+        await message.reply("🔒 سيتم إغلاق التكت خلال 3 ثواني...");
 
-      // ----------------------------------------------
-      // منع غير الإدارة
-      // ----------------------------------------------
+        setTimeout(async () => {
+          try {
+            await message.channel.delete(
+              "Ticket closed by authorized staff"
+            );
+          } catch (err) {
+            console.error("خطأ في إغلاق التكت:", err);
+          }
+        }, 3000);
 
-      if (!isAdmin(message.member)) {
+        return;
+      } else {
+        await message.reply(
+          "❌ ما عندك صلاحية إغلاق التكت."
+        );
 
-        if (
-          /اطرد|طرد|احظر|حظر|بان|ban|kick|timeout|تايم|رتبة|اعطي|أعطي|شيل/i
-            .test(command)
-        ) {
-          return message.reply(
-            "❌ هذا الأمر مخصص لأعضاء الإدارة فقط."
-          );
-        }
-
-        // إذا مجرد سؤال عادي للذكاء الاصطناعي
         return;
       }
-
-      // ==================================================
-      // طرد عضو
-      // ==================================================
-
-      if (/^(اطرد|طرد|kick)\b/i.test(command)) {
-
-        const member =
-          message.mentions.members.first();
-
-        if (!member) {
-          return message.reply(
-            "❌ منشن الشخص الذي تريد طرده."
-          );
-        }
-
-        if (member.id === message.author.id) {
-          return message.reply(
-            "❌ لا يمكنك طرد نفسك."
-          );
-        }
-
-        if (!member.kickable) {
-          return message.reply(
-            "❌ لا أستطيع طرد هذا الشخص. تأكد أن رتبة البوت أعلى من رتبته."
-          );
-        }
-
-        await member.kick(
-          `By ${message.author.tag}`
-        );
-
-        return message.reply(
-          `👢 تم طرد ${member.user.tag}.`
-        );
-      }
-
-      // ==================================================
-      // حظر عضو
-      // ==================================================
-
-      if (/^(احظر|حظر|بان|ban)\b/i.test(command)) {
-
-        const member =
-          message.mentions.members.first();
-
-        if (!member) {
-          return message.reply(
-            "❌ منشن الشخص الذي تريد حظره."
-          );
-        }
-
-        if (member.id === message.author.id) {
-          return message.reply(
-            "❌ لا يمكنك حظر نفسك."
-          );
-        }
-
-        if (!member.bannable) {
-          return message.reply(
-            "❌ لا أستطيع حظر هذا الشخص. تأكد أن رتبة البوت أعلى من رتبته."
-          );
-        }
-
-        await member.ban({
-          reason: `By ${message.author.tag}`
-        });
-
-        return message.reply(
-          `🔨 تم حظر ${member.user.tag}.`
-        );
-      }
-
-      // ==================================================
-      // Timeout
-      // ==================================================
-
-      if (
-        /^(timeout|تايم|تايم اوت|تايم أوت|اسكت)\b/i
-          .test(command)
-      ) {
-
-        const member =
-          message.mentions.members.first();
-
-        if (!member) {
-          return message.reply(
-            "❌ منشن الشخص."
-          );
-        }
-
-        if (!member.moderatable) {
-          return message.reply(
-            "❌ لا أستطيع إعطاء Timeout لهذا الشخص."
-          );
-        }
-
-        await member.timeout(
-          10 * 60 * 1000,
-          `By ${message.author.tag}`
-        );
-
-        return message.reply(
-          `⏱️ تم إعطاء ${member.user.tag} Timeout لمدة 10 دقائق.`
-        );
-      }
-
-      // ==================================================
-      // إعطاء رتبة
-      // ==================================================
-
-      if (
-        /^(اعطي|أعطي|اعط|أعط|role|رتبة)\b/i
-          .test(command)
-      ) {
-
-        const member =
-          message.mentions.members.first();
-
-        const role =
-          message.mentions.roles.first();
-
-        if (!member || !role) {
-          return message.reply(
-            "❌ الاستخدام:\n@البوت اعطي @الشخص @الرتبة"
-          );
-        }
-
-        if (
-          role.position >=
-          message.guild.members.me.roles.highest.position
-        ) {
-          return message.reply(
-            "❌ رتبة البوت يجب أن تكون أعلى من الرتبة المطلوبة."
-          );
-        }
-
-        await member.roles.add(role);
-
-        return message.reply(
-          `🎭 تم إعطاء ${member.user.tag} رتبة **${role.name}**.`
-        );
-      }
-
-      // ==================================================
-      // إزالة رتبة
-      // ==================================================
-
-      if (
-        /^(شيل|ازيل|أزيل|إزالة|remove)\b/i
-          .test(command)
-      ) {
-
-        const member =
-          message.mentions.members.first();
-
-        const role =
-          message.mentions.roles.first();
-
-        if (!member || !role) {
-          return message.reply(
-            "❌ الاستخدام:\n@البوت شيل @الشخص @الرتبة"
-          );
-        }
-
-        await member.roles.remove(role);
-
-        return message.reply(
-          `🗑️ تمت إزالة رتبة **${role.name}** من ${member.user.tag}.`
-        );
-      }
-
-      // ==================================================
-      // حذف رسائل
-      // ==================================================
-
-      const clear =
-        command.match(
-          /^(امسح|مسح|clear)\s+(\d+)/i
-        );
-
-      if (clear) {
-
-        const amount =
-          Number(clear[2]);
-
-        if (amount < 1 || amount > 100) {
-          return message.reply(
-            "❌ العدد يجب أن يكون بين 1 و100."
-          );
-        }
-
-        const deleted =
-          await message.channel.bulkDelete(
-            amount,
-            true
-          );
-
-        return message.channel.send(
-          `🧹 تم حذف ${deleted.size} رسالة.`
-        );
-      }
-
-      return;
     }
 
-    // ==================================================
-    // التكت فقط
-    // ==================================================
+    // =========================
+    // الرد فقط داخل التكت
+    // =========================
 
-    if (!isTicket(message.channel)) {
-      return;
-    }
+    const isTicket =
+      message.channel.name.startsWith("ticket-") ||
+      message.channel.name.startsWith("claimed-") ||
+      message.channel.name.includes("ticket");
 
-    // ==================================================
-    // إغلاق التكت
-    // ==================================================
+    if (!isTicket) return;
 
-    const close =
-      /^(اغلق|أغلق|اقفل|أقفل|سكر|close)\s*(التكت|التذكرة|ticket)?$/i
-        .test(text);
+    // تجاهل الرسائل الفارغة
+    if (!message.content.trim()) return;
 
-    if (close) {
-
-      await message.channel.send(
-        "🔒 سيتم إغلاق التكت خلال 3 ثواني..."
-      );
-
-      setTimeout(async () => {
-
-        try {
-
-          const row =
-            new ActionRowBuilder()
-              .addComponents(
-
-                new ButtonBuilder()
-                  .setCustomId("rating_1")
-                  .setLabel("⭐")
-                  .setStyle(ButtonStyle.Danger),
-
-                new ButtonBuilder()
-                  .setCustomId("rating_2")
-                  .setLabel("⭐⭐")
-                  .setStyle(ButtonStyle.Danger),
-
-                new ButtonBuilder()
-                  .setCustomId("rating_3")
-                  .setLabel("⭐⭐⭐")
-                  .setStyle(ButtonStyle.Secondary),
-
-                new ButtonBuilder()
-                  .setCustomId("rating_4")
-                  .setLabel("⭐⭐⭐⭐")
-                  .setStyle(ButtonStyle.Primary),
-
-                new ButtonBuilder()
-                  .setCustomId("rating_5")
-                  .setLabel("⭐⭐⭐⭐⭐")
-                  .setStyle(ButtonStyle.Success)
-
-              );
-
-          await message.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle("⭐ تقييم الدعم")
-                .setDescription(
-                  "قيّم تجربتك معنا من 1 إلى 5 نجوم."
-                )
-            ],
-            components: [row]
-          });
-
-        } catch (err) {
-          console.error(
-            "Close error:",
-            err
-          );
-        }
-
-      }, 3000);
-
-      return;
-    }
-
-    // ==================================================
-    // Gemini
-    // ==================================================
+    // =========================
+    // مؤشر الكتابة
+    // =========================
 
     await message.channel.sendTyping();
 
-    // آخر رسائل التكت
-    const messages =
-      await message.channel.messages.fetch({
-        limit: 8
-      });
-
-    const history =
-      [...messages.values()]
-        .reverse()
-        .map((msg) => {
-          return `${msg.author.username}: ${msg.content}`;
-        })
-        .join("\n");
+    // =========================
+    // طلب Gemini
+    // =========================
 
     const prompt = `
-${SYSTEM_PROMPT}
+أنت بوت دعم فني احترافي داخل Discord.
 
-محادثة التكت:
-${history}
+اسمك: TicketAI
 
-آخر رسالة من العميل:
-${text}
+مهمتك:
+- ساعد المستخدم في حل مشكلته.
+- تكلم بالعربية بشكل واضح وبسيط.
+- إذا المستخدم كتب "مرحبا" رد عليه بشكل طبيعي.
+- لا تخترع معلومات غير مؤكدة.
+- إذا المشكلة تحتاج تدخل موظف، قل له أن أحد أعضاء الدعم سيتابع معه.
+- لا تغلق التكت بنفسك.
+- لا تطرد أو تحظر أي شخص.
+- لا تنفذ أوامر Discord من خلال الذكاء الاصطناعي.
+- اجعل الرد مختصر وسريع.
+- لا تقل إنك Gemini.
+- لا تذكر تفاصيل البرمجة.
 
-اكتب الرد الذي يجب إرساله للعميل مباشرة.
+رسالة المستخدم:
+${message.content}
 `;
 
-    console.log(
-      `🧠 Gemini request from ${message.author.tag}`
-    );
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: prompt,
+      config: {
+        temperature: 0.5,
+        maxOutputTokens: 300
+      }
+    });
 
-    const response =
-      await ai.models.generateContent({
+    const answer = response.text?.trim();
 
-        model: "gemini-3.6-flash",
-
-        contents: prompt,
-
-        config: {
-          maxOutputTokens: 300
-        }
-
-      });
-
-    const answer =
-      response.text?.trim();
+    // =========================
+    // إرسال الرد
+    // =========================
 
     if (!answer) {
-      throw new Error(
-        "Gemini returned an empty response."
+      await message.reply(
+        "❌ ما قدرت أجهز رد حاليًا، حاول مرة ثانية."
       );
+      return;
     }
 
-    // Discord يسمح بـ 2000 حرف
-    if (answer.length <= 2000) {
-
-      await message.channel.send(answer);
-
-    } else {
-
-      for (
-        let i = 0;
-        i < answer.length;
-        i += 1900
-      ) {
-        await message.channel.send(
-          answer.substring(
-            i,
-            i + 1900
-          )
-        );
+    await message.reply({
+      content: answer.slice(0, 1900),
+      allowedMentions: {
+        repliedUser: false
       }
-    }
+    });
 
   } catch (error) {
+    console.error("❌ Gemini Error:", error);
 
-    console.error(
-      "================================"
-    );
+    let errorMessage =
+      "❌ صار خطأ مؤقت بالذكاء الاصطناعي، حاول مرة ثانية.";
 
-    console.error(
-      "❌ ERROR:"
-    );
+    if (
+      error.message &&
+      (
+        error.message.includes("API key") ||
+        error.message.includes("401") ||
+        error.message.includes("403")
+      )
+    ) {
+      errorMessage =
+        "❌ مفتاح Gemini غير صحيح أو غير مفعّل.";
+    }
 
-    console.error(
-      error?.message || error
-    );
-
-    console.error(
-      "================================"
-    );
+    if (
+      error.message &&
+      (
+        error.message.includes("429") ||
+        error.message.toLowerCase().includes("quota")
+      )
+    ) {
+      errorMessage =
+        "⏳ تم الوصول إلى حد استخدام Gemini، حاول لاحقًا.";
+    }
 
     try {
-      await message.channel.send(
-        "❌ صار خطأ أثناء الاتصال بالذكاء الاصطناعي."
-      );
+      await message.reply(errorMessage);
     } catch {}
   }
 });
 
-// ==================================================
-// التقييم
-// ==================================================
+// =========================
+// أخطاء عامة
+// =========================
 
-client.on(
-  "interactionCreate",
-  async (interaction) => {
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled Rejection:", error);
+});
 
-    if (!interaction.isButton()) {
-      return;
-    }
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+});
 
-    if (
-      !interaction.customId.startsWith(
-        "rating_"
-      )
-    ) {
-      return;
-    }
-
-    const rating =
-      Number(
-        interaction.customId.replace(
-          "rating_",
-          ""
-        )
-      );
-
-    await interaction.reply({
-      content:
-        `❤️ شكرًا لك! تم تسجيل تقييمك ${"⭐".repeat(rating)}`,
-      ephemeral: true
-    });
-
-    // حذف التكت بعد 5 ثواني
-    setTimeout(async () => {
-
-      try {
-        await interaction.channel.delete(
-          "Ticket closed after rating"
-        );
-      } catch (err) {
-        console.error(
-          "Delete ticket error:",
-          err.message
-        );
-      }
-
-    }, 5000);
-  }
-);
-
-// ==================================================
-// فحص المتغيرات
-// ==================================================
+// =========================
+// تسجيل الدخول
+// =========================
 
 if (!process.env.DISCORD_TOKEN) {
-
-  console.error(
-    "❌ DISCORD_TOKEN غير موجود في Railway Variables"
-  );
-
+  console.error("❌ DISCORD_TOKEN غير موجود في Variables");
   process.exit(1);
 }
 
 if (!process.env.GEMINI_API_KEY) {
-
-  console.error(
-    "❌ GEMINI_API_KEY غير موجود في Railway Variables"
-  );
-
+  console.error("❌ GEMINI_API_KEY غير موجود في Variables");
   process.exit(1);
 }
 
-// ==================================================
-// Login
-// ==================================================
-
-client.login(
-  process.env.DISCORD_TOKEN
-);
+client.login(process.env.DISCORD_TOKEN);
