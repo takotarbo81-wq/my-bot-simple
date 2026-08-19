@@ -1,111 +1,40 @@
 const {
   Client,
   GatewayIntentBits,
-  ChannelType,
   PermissionsBitField,
+  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   SlashCommandBuilder,
   REST,
-  Routes,
+  Routes
 } = require("discord.js");
 
+const { GoogleGenAI } = require("@google/genai");
 const fs = require("fs");
 require("dotenv").config();
 
-const { GoogleGenAI } = require("@google/genai");
-
 // =====================================================
-// CONFIG
+// الإعدادات
 // =====================================================
 
-const ADMIN_ROLE_ID = ""; 
-// ضع ID رتبة الإدارة هنا.
-// مثال:
-// const ADMIN_ROLE_ID = "123456789012345678";
+// حط ID رتبة الإدارة هنا
+const ADMIN_ROLE_ID = "1538954905488851016";
 
+// اختياري - ID قناة اللوج
 const LOG_CHANNEL_ID = "";
-// اختياري: ضع ID قناة اللوج هنا.
-
-const PROMPT_FILE = "./prompt.json";
 
 // =====================================================
-// DEFAULT PROMPT
-// =====================================================
-
-const DEFAULT_PROMPT = `
-أنت بوت دعم فني احترافي داخل سيرفر Discord.
-
-مهمتك مساعدة العملاء داخل التكتات وحل مشاكلهم.
-
-القواعد:
-- تحدث بالعربية.
-- كن محترمًا وودودًا.
-- افهم مشكلة العميل.
-- حاول حل المشكلة خطوة بخطوة.
-- اجعل الرد واضحًا ومختصرًا.
-- لا تخترع معلومات.
-- إذا لم تعرف الحل، أخبر العميل أن الموظف المختص يستطيع المساعدة.
-- لا تدّعي أنك إنسان.
-- لا تغلق التكت من نفسك.
-- لا تطلب كلمات مرور أو مفاتيح API أو رموز تحقق.
-- لا تكرر نفس الكلام.
-- استخدم الإيموجي باعتدال.
-`;
-
-// =====================================================
-// PROMPT STORAGE
-// =====================================================
-
-function loadPrompt() {
-  try {
-    if (!fs.existsSync(PROMPT_FILE)) {
-      fs.writeFileSync(
-        PROMPT_FILE,
-        JSON.stringify(
-          { prompt: DEFAULT_PROMPT },
-          null,
-          2
-        )
-      );
-
-      return DEFAULT_PROMPT;
-    }
-
-    const data = JSON.parse(
-      fs.readFileSync(PROMPT_FILE, "utf8")
-    );
-
-    return data.prompt || DEFAULT_PROMPT;
-
-  } catch (error) {
-    console.error("Prompt load error:", error);
-    return DEFAULT_PROMPT;
-  }
-}
-
-function savePrompt(prompt) {
-  fs.writeFileSync(
-    PROMPT_FILE,
-    JSON.stringify(
-      { prompt },
-      null,
-      2
-    )
-  );
-}
-
-// =====================================================
-// GEMINI
+// Gemini
 // =====================================================
 
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: process.env.GEMINI_API_KEY
 });
 
 // =====================================================
-// DISCORD
+// Discord
 // =====================================================
 
 const client = new Client({
@@ -113,69 +42,104 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 // =====================================================
-// TICKET
+// إعدادات الذكاء الاصطناعي
+// =====================================================
+
+const AI_PROMPT = `
+أنت بوت دعم فني احترافي داخل Discord.
+
+مهمتك:
+- مساعدة العميل داخل التكت.
+- فهم المشكلة بسرعة.
+- إعطاء حل واضح ومباشر.
+- الرد باللغة العربية.
+- كن محترمًا وودودًا.
+- لا تطول الرد بدون سبب.
+- لا تكرر الكلام.
+- إذا لم تعرف الحل قل للعميل أن الموظف المختص سيساعده.
+- لا تطلب كلمة مرور أو Token أو API Key.
+- لا تغلق التكت بنفسك.
+- لا تنفذ أوامر الإدارة من خلال Gemini.
+`;
+
+// =====================================================
+// معرفة هل القناة تكت
 // =====================================================
 
 function isTicket(channel) {
   if (!channel) return false;
 
-  if (
-    channel.type !== ChannelType.GuildText
-  ) {
+  if (channel.type !== ChannelType.GuildText) {
     return false;
   }
 
   const name = channel.name.toLowerCase();
 
   return (
+    name.startsWith("ticket-") ||
+    name.startsWith("claimed-") ||
     name.includes("ticket") ||
     name.includes("تكت")
   );
 }
 
 // =====================================================
-// ADMIN
+// صلاحية الإدارة
 // =====================================================
 
 function isAdmin(member) {
   if (!member) return false;
 
-  // إذا وضعت Role ID
-  if (ADMIN_ROLE_ID) {
-    return member.roles.cache.has(
-      ADMIN_ROLE_ID
-    );
+  if (
+    ADMIN_ROLE_ID &&
+    ADMIN_ROLE_ID !== "ضع_هنا_ID_الرتبة"
+  ) {
+    return member.roles.cache.has(ADMIN_ROLE_ID);
   }
 
-  // إذا تركته فارغًا
   return member.permissions.has(
     PermissionsBitField.Flags.Administrator
   );
 }
 
 // =====================================================
-// BOT READY
+// اللوج
+// =====================================================
+
+async function sendLog(guild, text) {
+  if (!LOG_CHANNEL_ID) return;
+
+  try {
+    const channel =
+      guild.channels.cache.get(LOG_CHANNEL_ID);
+
+    if (channel) {
+      await channel.send(text);
+    }
+  } catch (err) {
+    console.log("Log Error:", err.message);
+  }
+}
+
+// =====================================================
+// تشغيل البوت
 // =====================================================
 
 client.once("ready", async () => {
-
   console.log("================================");
   console.log(`✅ البوت شغال: ${client.user.tag}`);
-  console.log("🤖 Gemini متصل");
-  console.log("🎫 نظام التكتات جاهز");
+  console.log("🤖 Gemini جاهز");
+  console.log("🎫 نظام التكت جاهز");
   console.log("🛡️ نظام الإدارة جاهز");
   console.log("⭐ نظام التقييم جاهز");
   console.log("================================");
 
-  // ===================================================
-  // SLASH COMMANDS
-  // ===================================================
-
+  // Slash Commands
   const commands = [
 
     new SlashCommandBuilder()
@@ -184,779 +148,667 @@ client.once("ready", async () => {
       .addStringOption(option =>
         option
           .setName("text")
-          .setDescription("البرومبت الجديد")
+          .setDescription("التعليمات الجديدة")
           .setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("promot-view")
-      .setDescription("عرض البرومبت الحالي"),
+      .setDescription("عرض تعليمات الذكاء الاصطناعي"),
 
     new SlashCommandBuilder()
       .setName("promot-reset")
-      .setDescription("إرجاع البرومبت الافتراضي"),
+      .setDescription("إرجاع تعليمات الذكاء الاصطناعي الافتراضية")
 
   ].map(command => command.toJSON());
 
   try {
-
     const rest = new REST({
-      version: "10",
-    }).setToken(
-      process.env.DISCORD_TOKEN
-    );
+      version: "10"
+    }).setToken(process.env.DISCORD_TOKEN);
 
     await rest.put(
-      Routes.applicationCommands(
-        client.user.id
-      ),
+      Routes.applicationCommands(client.user.id),
       {
-        body: commands,
+        body: commands
       }
     );
 
-    console.log("✅ Slash Commands registered");
+    console.log("✅ Slash Commands جاهزة");
 
-  } catch (error) {
+  } catch (err) {
     console.error(
       "❌ Slash Commands Error:",
-      error
+      err.message
     );
   }
 });
 
 // =====================================================
-// SLASH COMMANDS
+// Slash Commands
 // =====================================================
 
-client.on(
-  "interactionCreate",
-  async interaction => {
+client.on("interactionCreate", async interaction => {
 
-    if (!interaction.isChatInputCommand()) {
-      return;
-    }
-
-    // =================================================
-    // /promot
-    // =================================================
-
-    if (
-      interaction.commandName === "promot"
-    ) {
-
-      if (
-        !isAdmin(
-          interaction.member
-        )
-      ) {
-
-        await interaction.reply({
-          content:
-            "❌ ليس لديك صلاحية استخدام هذا الأمر.",
-          ephemeral: true,
-        });
-
-        return;
-      }
-
-      const text =
-        interaction.options.getString(
-          "text"
-        );
-
-      savePrompt(text);
-
-      await interaction.reply({
-        content:
-          "✅ تم تحديث تعليمات Gemini بنجاح.",
-        ephemeral: true,
-      });
-
-      return;
-    }
-
-    // =================================================
-    // /promot-view
-    // =================================================
-
-    if (
-      interaction.commandName ===
-      "promot-view"
-    ) {
-
-      if (
-        !isAdmin(
-          interaction.member
-        )
-      ) {
-
-        await interaction.reply({
-          content:
-            "❌ ليس لديك صلاحية.",
-          ephemeral: true,
-        });
-
-        return;
-      }
-
-      const prompt =
-        loadPrompt();
-
-      await interaction.reply({
-        content:
-          "```text\n" +
-          prompt.substring(
-            0,
-            1900
-          ) +
-          "\n```",
-        ephemeral: true,
-      });
-
-      return;
-    }
-
-    // =================================================
-    // /promot-reset
-    // =================================================
-
-    if (
-      interaction.commandName ===
-      "promot-reset"
-    ) {
-
-      if (
-        !isAdmin(
-          interaction.member
-        )
-      ) {
-
-        await interaction.reply({
-          content:
-            "❌ ليس لديك صلاحية.",
-          ephemeral: true,
-        });
-
-        return;
-      }
-
-      savePrompt(
-        DEFAULT_PROMPT
-      );
-
-      await interaction.reply({
-        content:
-          "✅ تم إرجاع البرومبت الافتراضي.",
-        ephemeral: true,
-      });
-
-      return;
-    }
-  }
-);
-
-// =====================================================
-// LOG
-// =====================================================
-
-async function sendLog(
-  guild,
-  text
-) {
-
-  if (!LOG_CHANNEL_ID) {
+  if (!interaction.isChatInputCommand()) {
     return;
   }
 
-  try {
+  // /promot
+  if (interaction.commandName === "promot") {
 
-    const channel =
-      guild.channels.cache.get(
-        LOG_CHANNEL_ID
-      );
-
-    if (channel) {
-      await channel.send(text);
+    if (!isAdmin(interaction.member)) {
+      return interaction.reply({
+        content: "❌ ما عندك صلاحية.",
+        ephemeral: true
+      });
     }
 
-  } catch (error) {
-    console.log(
-      "Log error:",
-      error.message
-    );
+    const text =
+      interaction.options.getString("text");
+
+    try {
+      fs.writeFileSync(
+        "prompt.txt",
+        text,
+        "utf8"
+      );
+
+      await interaction.reply({
+        content: "✅ تم تحديث تعليمات Gemini.",
+        ephemeral: true
+      });
+
+    } catch (err) {
+      await interaction.reply({
+        content: "❌ فشل حفظ التعليمات.",
+        ephemeral: true
+      });
+    }
+
+    return;
   }
-}
+
+  // /promot-view
+  if (
+    interaction.commandName === "promot-view"
+  ) {
+
+    if (!isAdmin(interaction.member)) {
+      return interaction.reply({
+        content: "❌ ما عندك صلاحية.",
+        ephemeral: true
+      });
+    }
+
+    let prompt = AI_PROMPT;
+
+    try {
+      if (fs.existsSync("prompt.txt")) {
+        prompt = fs.readFileSync(
+          "prompt.txt",
+          "utf8"
+        );
+      }
+    } catch {}
+
+    return interaction.reply({
+      content:
+        "```text\n" +
+        prompt.substring(0, 1900) +
+        "\n```",
+      ephemeral: true
+    });
+  }
+
+  // /promot-reset
+  if (
+    interaction.commandName === "promot-reset"
+  ) {
+
+    if (!isAdmin(interaction.member)) {
+      return interaction.reply({
+        content: "❌ ما عندك صلاحية.",
+        ephemeral: true
+      });
+    }
+
+    try {
+      if (fs.existsSync("prompt.txt")) {
+        fs.unlinkSync("prompt.txt");
+      }
+    } catch {}
+
+    return interaction.reply({
+      content:
+        "✅ تم إرجاع تعليمات Gemini الافتراضية.",
+      ephemeral: true
+    });
+  }
+});
 
 // =====================================================
-// CLOSE WORDS
+// الأوامر عن طريق منشن البوت
 // =====================================================
 
-const closeWords = [
-  "اغلق التكت",
-  "أغلق التكت",
-  "اقفل التكت",
-  "أقفل التكت",
-  "سكر التكت",
-  "اغلاق التكت",
-  "إغلاق التكت",
-  "close ticket",
-];
+client.on("messageCreate", async message => {
 
-// =====================================================
-// MESSAGE CREATE
-// =====================================================
+  try {
 
-client.on(
-  "messageCreate",
-  async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+
+    const content =
+      message.content.trim();
+
+    if (!content) return;
+
+    // =================================================
+    // أوامر الإدارة عند منشن البوت
+    // =================================================
+
+    if (message.mentions.has(client.user)) {
+
+      const command =
+        content
+          .replace(
+            new RegExp(
+              `<@!?${client.user.id}>`,
+              "g"
+            ),
+            ""
+          )
+          .trim();
+
+      // -----------------------------------------------
+      // تحقق من الرتبة
+      // -----------------------------------------------
+
+      if (!isAdmin(message.member)) {
+
+        if (
+          /اطرد|طرد|احظر|حظر|ban|kick|timeout|رتبة|اعطي/i
+            .test(command)
+        ) {
+          await message.reply(
+            "❌ هذا الأمر مخصص للإدارة فقط."
+          );
+        }
+
+        return;
+      }
+
+      // =================================================
+      // KICK
+      // =================================================
+
+      if (
+        /^(اطرد|طرد|kick)\b/i.test(command)
+      ) {
+
+        const target =
+          message.mentions.members.first();
+
+        if (!target) {
+          return message.reply(
+            "❌ اعمل منشن للشخص."
+          );
+        }
+
+        if (!target.kickable) {
+          return message.reply(
+            "❌ لا أستطيع طرد هذا الشخص. تأكد أن رتبة البوت أعلى منه."
+          );
+        }
+
+        await target.kick(
+          `By ${message.author.tag}`
+        );
+
+        await message.reply(
+          `👢 تم طرد ${target.user.tag}.`
+        );
+
+        await sendLog(
+          message.guild,
+          `👢 طرد\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
+        );
+
+        return;
+      }
+
+      // =================================================
+      // BAN
+      // =================================================
+
+      if (
+        /^(احظر|حظر|ban)\b/i.test(command)
+      ) {
+
+        const target =
+          message.mentions.members.first();
+
+        if (!target) {
+          return message.reply(
+            "❌ اعمل منشن للشخص."
+          );
+        }
+
+        if (!target.bannable) {
+          return message.reply(
+            "❌ لا أستطيع حظر هذا الشخص. تأكد أن رتبة البوت أعلى منه."
+          );
+        }
+
+        await target.ban({
+          reason:
+            `By ${message.author.tag}`
+        });
+
+        await message.reply(
+          `🔨 تم حظر ${target.user.tag}.`
+        );
+
+        await sendLog(
+          message.guild,
+          `🔨 حظر\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
+        );
+
+        return;
+      }
+
+      // =================================================
+      // TIMEOUT
+      // =================================================
+
+      if (
+        /timeout|تايم اوت|تايم أوت|اسكت/i
+          .test(command)
+      ) {
+
+        const target =
+          message.mentions.members.first();
+
+        if (!target) {
+          return message.reply(
+            "❌ اعمل منشن للشخص."
+          );
+        }
+
+        if (!target.moderatable) {
+          return message.reply(
+            "❌ لا أستطيع إعطاء Timeout لهذا الشخص."
+          );
+        }
+
+        await target.timeout(
+          10 * 60 * 1000,
+          `By ${message.author.tag}`
+        );
+
+        await message.reply(
+          `⏱️ تم إعطاء ${target.user.tag} Timeout لمدة 10 دقائق.`
+        );
+
+        await sendLog(
+          message.guild,
+          `⏱️ Timeout\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
+        );
+
+        return;
+      }
+
+      // =================================================
+      // إعطاء رتبة
+      // =================================================
+
+      if (
+        /^(اعطي|أعطي|اعط|أعط|رتبة|role)\b/i
+          .test(command)
+      ) {
+
+        const target =
+          message.mentions.members.first();
+
+        const role =
+          message.mentions.roles.first();
+
+        if (!target || !role) {
+          return message.reply(
+            "❌ الاستخدام:\n@البوت اعطي @الشخص @الرتبة"
+          );
+        }
+
+        if (
+          role.position >=
+          message.guild.members.me.roles.highest.position
+        ) {
+          return message.reply(
+            "❌ رتبة البوت يجب أن تكون أعلى من الرتبة المطلوبة."
+          );
+        }
+
+        await target.roles.add(role);
+
+        await message.reply(
+          `🎭 تم إعطاء ${target.user} رتبة ${role}.`
+        );
+
+        await sendLog(
+          message.guild,
+          `🎭 إعطاء رتبة\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}\nالرتبة: ${role.name}`
+        );
+
+        return;
+      }
+
+      // =================================================
+      // إزالة رتبة
+      // =================================================
+
+      if (
+        /^(شيل|ازيل|إزالة|احذف رتبة|remove role)\b/i
+          .test(command)
+      ) {
+
+        const target =
+          message.mentions.members.first();
+
+        const role =
+          message.mentions.roles.first();
+
+        if (!target || !role) {
+          return message.reply(
+            "❌ الاستخدام:\n@البوت شيل @الشخص @الرتبة"
+          );
+        }
+
+        await target.roles.remove(role);
+
+        await message.reply(
+          `🗑️ تم إزالة رتبة ${role} من ${target.user}.`
+        );
+
+        return;
+      }
+
+      // =================================================
+      // حذف رسائل
+      // =================================================
+
+      const clearMatch =
+        command.match(
+          /^(امسح|مسح|clear)\s+(\d+)/i
+        );
+
+      if (clearMatch) {
+
+        const amount =
+          Number(clearMatch[2]);
+
+        if (
+          amount < 1 ||
+          amount > 100
+        ) {
+          return message.reply(
+            "❌ العدد من 1 إلى 100."
+          );
+        }
+
+        const deleted =
+          await message.channel.bulkDelete(
+            amount,
+            true
+          );
+
+        await message.channel.send(
+          `🧹 تم حذف ${deleted.size} رسالة.`
+        );
+
+        return;
+      }
+
+      return;
+    }
+
+    // =================================================
+    // نظام التكت
+    // =================================================
+
+    if (!isTicket(message.channel)) {
+      return;
+    }
+
+    // =================================================
+    // إغلاق التكت
+    // =================================================
+
+    const lower =
+      content.toLowerCase();
+
+    const closeWords = [
+      "اغلق التكت",
+      "أغلق التكت",
+      "اقفل التكت",
+      "أقفل التكت",
+      "سكر التكت",
+      "اغلاق التكت",
+      "إغلاق التكت",
+      "close ticket"
+    ];
+
+    const wantsClose =
+      closeWords.some(word =>
+        lower.includes(
+          word.toLowerCase()
+        )
+      );
+
+    if (wantsClose) {
+
+      await message.channel.send(
+        "🔒 سيتم إغلاق التكت خلال 3 ثواني..."
+      );
+
+      setTimeout(async () => {
+
+        try {
+
+          await message.channel.permissionOverwrites.edit(
+            message.guild.roles.everyone,
+            {
+              SendMessages: false
+            }
+          );
+
+          const row =
+            new ActionRowBuilder()
+              .addComponents(
+
+                new ButtonBuilder()
+                  .setCustomId("rating_1")
+                  .setLabel("⭐")
+                  .setStyle(ButtonStyle.Danger),
+
+                new ButtonBuilder()
+                  .setCustomId("rating_2")
+                  .setLabel("⭐⭐")
+                  .setStyle(ButtonStyle.Danger),
+
+                new ButtonBuilder()
+                  .setCustomId("rating_3")
+                  .setLabel("⭐⭐⭐")
+                  .setStyle(ButtonStyle.Secondary),
+
+                new ButtonBuilder()
+                  .setCustomId("rating_4")
+                  .setLabel("⭐⭐⭐⭐")
+                  .setStyle(ButtonStyle.Primary),
+
+                new ButtonBuilder()
+                  .setCustomId("rating_5")
+                  .setLabel("⭐⭐⭐⭐⭐")
+                  .setStyle(ButtonStyle.Success)
+
+              );
+
+          await message.channel.send({
+            content:
+              "⭐ **قيّم تجربتك معنا من 1 إلى 5:**",
+            components: [row]
+          });
+
+        } catch (err) {
+
+          console.error(
+            "Close Error:",
+            err
+          );
+
+        }
+
+      }, 3000);
+
+      return;
+    }
+
+    // =================================================
+    // Gemini
+    // =================================================
+
+    await message.channel.sendTyping();
+
+    // نجيب آخر 5 رسائل فقط للسرعة
+    const messages =
+      await message.channel.messages.fetch({
+        limit: 5
+      });
+
+    const conversation =
+      [...messages.values()]
+        .reverse()
+        .map(msg =>
+          `${msg.author.username}: ${msg.content}`
+        )
+        .join("\n");
+
+    let customPrompt =
+      AI_PROMPT;
 
     try {
 
-      if (message.author.bot) {
-        return;
-      }
-
-      if (!message.guild) {
-        return;
-      }
-
-      const content =
-        message.content.trim();
-
-      if (!content) {
-        return;
-      }
-
-      // =================================================
-      // ADMIN COMMANDS
-      // فقط عند منشن البوت
-      // =================================================
-
       if (
-        message.mentions.has(
-          client.user
-        )
+        fs.existsSync("prompt.txt")
       ) {
-
-        const command =
-          content
-            .replace(
-              new RegExp(
-                `<@!?${client.user.id}>`,
-                "g"
-              ),
-              ""
-            )
-            .trim();
-
-        // ===============================================
-        // إذا المستخدم غير إداري
-        // ===============================================
-
-        if (!isAdmin(message.member)) {
-
-          // لا نزعج المستخدم برسالة في كل منشن
-          if (
-            /اطرد|طرد|احظر|حظر|ban|kick|timeout|تايم/i
-              .test(command)
-          ) {
-
-            await message.reply(
-              "❌ ليس لديك صلاحية استخدام أوامر الإدارة."
-            );
-          }
-
-          return;
-        }
-
-        // =================================================
-        // KICK
-        // =================================================
-
-        if (
-          /(^|\s)(اطرد|طرد|kick)(\s|$)/i
-            .test(command)
-        ) {
-
-          const target =
-            message.mentions.members
-              .filter(
-                member =>
-                  member.id !==
-                  client.user.id
-              )
-              .first();
-
-          if (!target) {
-
-            await message.reply(
-              "❌ اعمل منشن للشخص الذي تريد طرده."
-            );
-
-            return;
-          }
-
-          if (!target.kickable) {
-
-            await message.reply(
-              "❌ لا أستطيع طرد هذا العضو. تأكد من ترتيب الرتب وصلاحيات البوت."
-            );
-
-            return;
-          }
-
-          await target.kick(
-            `By ${message.author.tag}`
+        customPrompt =
+          fs.readFileSync(
+            "prompt.txt",
+            "utf8"
           );
-
-          await message.reply(
-            `👢 تم طرد ${target.user.tag}.`
-          );
-
-          await sendLog(
-            message.guild,
-            `👢 **Kick**\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
-          );
-
-          return;
-        }
-
-        // =================================================
-        // BAN
-        // =================================================
-
-        if (
-          /(^|\s)(احظر|حظر|ban)(\s|$)/i
-            .test(command)
-        ) {
-
-          const target =
-            message.mentions.members
-              .filter(
-                member =>
-                  member.id !==
-                  client.user.id
-              )
-              .first();
-
-          if (!target) {
-
-            await message.reply(
-              "❌ اعمل منشن للشخص الذي تريد حظره."
-            );
-
-            return;
-          }
-
-          if (!target.bannable) {
-
-            await message.reply(
-              "❌ لا أستطيع حظر هذا العضو. تأكد من ترتيب الرتب وصلاحيات البوت."
-            );
-
-            return;
-          }
-
-          await target.ban({
-            reason:
-              `By ${message.author.tag}`,
-          });
-
-          await message.reply(
-            `🔨 تم حظر ${target.user.tag}.`
-          );
-
-          await sendLog(
-            message.guild,
-            `🔨 **Ban**\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
-          );
-
-          return;
-        }
-
-        // =================================================
-        // TIMEOUT
-        // =================================================
-
-        if (
-          /timeout|تايم اوت|تايم أوت|اسكت/i
-            .test(command)
-        ) {
-
-          const target =
-            message.mentions.members
-              .filter(
-                member =>
-                  member.id !==
-                  client.user.id
-              )
-              .first();
-
-          if (!target) {
-
-            await message.reply(
-              "❌ اعمل منشن للشخص."
-            );
-
-            return;
-          }
-
-          if (!target.moderatable) {
-
-            await message.reply(
-              "❌ لا أستطيع إعطاء Timeout لهذا العضو."
-            );
-
-            return;
-          }
-
-          await target.timeout(
-            10 * 60 * 1000,
-            `By ${message.author.tag}`
-          );
-
-          await message.reply(
-            `⏱️ تم إعطاء ${target.user.tag} Timeout لمدة 10 دقائق.`
-          );
-
-          await sendLog(
-            message.guild,
-            `⏱️ **Timeout**\nالمنفذ: ${message.author}\nالعضو: ${target.user.tag}`
-          );
-
-          return;
-        }
-
-        // =================================================
-        // CLEAR
-        // =================================================
-
-        const clearMatch =
-          command.match(
-            /(?:امسح|مسح|clear)\s+(\d+)/i
-          );
-
-        if (clearMatch) {
-
-          const amount =
-            Number(
-              clearMatch[1]
-            );
-
-          if (
-            amount < 1 ||
-            amount > 100
-          ) {
-
-            await message.reply(
-              "❌ العدد يجب أن يكون من 1 إلى 100."
-            );
-
-            return;
-          }
-
-          const deleted =
-            await message.channel.bulkDelete(
-              amount,
-              true
-            );
-
-          await message.channel.send(
-            `🧹 تم حذف ${deleted.size} رسالة.`
-          );
-
-          return;
-        }
-
-        // =================================================
-        // إذا ما كان أمر معروف
-        // نخلي Gemini يفهم الطلب
-        // =================================================
-
-        await message.channel.sendTyping();
-
-        const result =
-          await ai.models.generateContent({
-
-            model:
-              "gemini-3.6-flash",
-
-            contents: `
-أنت مساعد إدارة Discord.
-
-المستخدم منشنك وطلب منك شيئًا.
-
-لكن لا تنفذ أي إجراء إداري بنفسك.
-الأوامر الإدارية يتم تنفيذها فقط من كود البوت بعد التحقق من الصلاحيات.
-
-إذا كان الطلب غير واضح، اطلب توضيحًا.
-
-الطلب:
-${command}
-            `,
-
-            config: {
-              maxOutputTokens: 200,
-            },
-          });
-
-        const reply =
-          result.text;
-
-        if (reply) {
-          await message.reply(
-            reply.substring(
-              0,
-              1900
-            )
-          );
-        }
-
-        return;
       }
 
-      // =================================================
-      // TICKET SYSTEM
-      // =================================================
+    } catch {}
 
-      if (
-        !isTicket(
-          message.channel
-        )
-      ) {
-        return;
-      }
+    // =================================================
+    // طلب Gemini
+    // =================================================
 
-      // =================================================
-      // CLOSE TICKET
-      // =================================================
+    const result =
+      await ai.models.generateContent({
 
-      const lower =
-        content.toLowerCase();
+        model: "gemini-3.6-flash",
 
-      const wantsClose =
-        closeWords.some(
-          word =>
-            lower.includes(
-              word.toLowerCase()
-            )
-        );
+        contents: `
+${customPrompt}
 
-      if (wantsClose) {
-
-        // صاحب التكت أو الإدارة
-        // يمكنهم طلب الإغلاق
-
-        await message.channel.send(
-          "🔒 سيتم إغلاق التكت خلال 3 ثوانٍ..."
-        );
-
-        setTimeout(
-          async () => {
-
-            try {
-
-              await message.channel.permissionOverwrites.edit(
-                message.guild.roles.everyone,
-                {
-                  SendMessages:
-                    false,
-                }
-              );
-
-              const row =
-                new ActionRowBuilder()
-                  .addComponents(
-
-                    new ButtonBuilder()
-                      .setCustomId(
-                        "rating_1"
-                      )
-                      .setLabel(
-                        "⭐"
-                      )
-                      .setStyle(
-                        ButtonStyle.Danger
-                      ),
-
-                    new ButtonBuilder()
-                      .setCustomId(
-                        "rating_2"
-                      )
-                      .setLabel(
-                        "⭐⭐"
-                      )
-                      .setStyle(
-                        ButtonStyle.Danger
-                      ),
-
-                    new ButtonBuilder()
-                      .setCustomId(
-                        "rating_3"
-                      )
-                      .setLabel(
-                        "⭐⭐⭐"
-                      )
-                      .setStyle(
-                        ButtonStyle.Secondary
-                      ),
-
-                    new ButtonBuilder()
-                      .setCustomId(
-                        "rating_4"
-                      )
-                      .setLabel(
-                        "⭐⭐⭐⭐"
-                      )
-                      .setStyle(
-                        ButtonStyle.Primary
-                      ),
-
-                    new ButtonBuilder()
-                      .setCustomId(
-                        "rating_5"
-                      )
-                      .setLabel(
-                        "⭐⭐⭐⭐⭐"
-                      )
-                      .setStyle(
-                        ButtonStyle.Success
-                      )
-                  );
-
-              await message.channel.send({
-                content:
-                  "⭐ **قيّم تجربتك معنا من 1 إلى 5:**",
-                components: [
-                  row,
-                ],
-              });
-
-            } catch (
-              error
-            ) {
-
-              console.error(
-                "Close error:",
-                error
-              );
-            }
-
-          },
-          3000
-        );
-
-        return;
-      }
-
-      // =================================================
-      // GEMINI SUPPORT
-      // =================================================
-
-      await message.channel.sendTyping();
-
-      // =================================================
-      // آخر 8 رسائل فقط
-      // أسرع من 15
-      // =================================================
-
-      const messages =
-        await message.channel.messages.fetch({
-          limit: 8,
-        });
-
-      const conversation =
-        [...messages.values()]
-          .reverse()
-          .map(
-            msg =>
-              `${msg.author.username}: ${msg.content}`
-          )
-          .join("\n");
-
-      const systemPrompt =
-        loadPrompt();
-
-      const result =
-        await ai.models.generateContent({
-
-          model:
-            "gemini-3.6-flash",
-
-          contents: `
-${systemPrompt}
-
-محادثة التكت الأخيرة:
+محادثة التكت:
 ${conversation}
 
-آخر رسالة:
+رسالة العميل الحالية:
 ${content}
 
-أجب الآن على العميل مباشرة.
-          `,
+أجب العميل مباشرة.
+خلي الرد سريع وواضح ومختصر.
+        `,
 
-          config: {
-            maxOutputTokens: 300,
-          },
-        });
+        config: {
+          maxOutputTokens: 250,
+          temperature: 0.4
+        }
 
-      const reply =
-        result.text;
+      });
 
-      if (!reply) {
-        return;
-      }
+    const reply =
+      result.text;
 
-      // =================================================
-      // إرسال الرد
-      // =================================================
+    if (!reply) {
+      console.log(
+        "Gemini returned empty response."
+      );
+      return;
+    }
 
-      if (
-        reply.length <= 2000
+    // Discord حد الرسالة 2000 حرف
+    if (reply.length <= 2000) {
+
+      await message.channel.send(
+        reply
+      );
+
+    } else {
+
+      for (
+        let i = 0;
+        i < reply.length;
+        i += 1900
       ) {
 
         await message.channel.send(
-          reply
+          reply.substring(
+            i,
+            i + 1900
+          )
         );
 
-      } else {
-
-        for (
-          let i = 0;
-          i < reply.length;
-          i += 1900
-        ) {
-
-          await message.channel.send(
-            reply.substring(
-              i,
-              i + 1900
-            )
-          );
-        }
       }
+    }
 
-    } catch (error) {
+  } catch (error) {
 
-      console.error(
-        "❌ MAIN ERROR:",
-        error
+    // =================================================
+    // الخطأ الحقيقي يظهر في Railway
+    // =================================================
+
+    console.error(
+      "================================"
+    );
+
+    console.error(
+      "❌ GEMINI/DISCORD ERROR"
+    );
+
+    console.error(
+      error?.message || error
+    );
+
+    console.error(
+      "================================"
+    );
+
+    try {
+
+      await message.channel.send(
+        "❌ صار خطأ مؤقت في الذكاء الاصطناعي، حاول مرة ثانية."
       );
 
-      try {
+    } catch {}
 
-        await message.channel.send(
-          "❌ صار خطأ مؤقت، حاول مرة ثانية."
-        );
-
-      } catch {}
-    }
   }
-);
+
+});
 
 // =====================================================
-// RATINGS
+// التقييم
 // =====================================================
 
 client.on(
@@ -986,45 +838,58 @@ client.on(
     await interaction.reply({
       content:
         `❤️ شكرًا لك! تم تسجيل تقييمك ${"⭐".repeat(rating)}`,
-      ephemeral: true,
+      ephemeral: true
     });
 
     await sendLog(
       interaction.guild,
-      `⭐ **Ticket Rating**\nالمستخدم: ${interaction.user}\nالتقييم: ${rating}/5`
+      `⭐ تقييم تكت\nالمستخدم: ${interaction.user}\nالتقييم: ${rating}/5`
     );
 
     try {
 
       await interaction.message.edit({
-        components: [],
+        components: []
       });
 
     } catch {}
 
     // حذف التكت بعد 5 ثواني
 
-    setTimeout(
-      async () => {
+    setTimeout(async () => {
 
-        try {
+      try {
 
-          await interaction.channel.delete(
-            "Ticket closed"
-          );
+        await interaction.channel.delete(
+          "Ticket closed"
+        );
 
-        } catch {}
+      } catch {}
 
-      },
-      5000
-    );
+    }, 5000);
+
   }
 );
 
 // =====================================================
-// LOGIN
+// تسجيل الدخول
 // =====================================================
+
+if (!process.env.DISCORD_TOKEN) {
+  console.error(
+    "❌ DISCORD_TOKEN غير موجود في Variables"
+  );
+  process.exit(1);
+}
+
+if (!process.env.GEMINI_API_KEY) {
+  console.error(
+    "❌ GEMINI_API_KEY غير موجود في Variables"
+  );
+  process.exit(1);
+}
 
 client.login(
   process.env.DISCORD_TOKEN
 );
+
