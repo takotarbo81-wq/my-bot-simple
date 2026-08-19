@@ -10,7 +10,7 @@ const CONFIG = {
 - إذا كانت المشكلة معقدة أو تحتاج تدخل بشري، وضح للعضو إنك بتحوله لفريق الدعم.
 - خلي ردودك بالعربية إلا إذا كتب العضو بالإنجليزي.
 - لا تخترع معلومات لا تعرفها.`,
-  MODEL_NAME: 'gemini-1.5-flash',
+  MODEL_NAME: 'gemini-flash-latest',
 };
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
