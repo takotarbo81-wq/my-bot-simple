@@ -12,6 +12,10 @@ const {
   SlashCommandBuilder
 } = require("discord.js");
 
+// ==========================================
+// CLIENT
+// ==========================================
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -20,40 +24,45 @@ const client = new Client({
   ]
 });
 
+// ==========================================
+// VARIABLES
+// ==========================================
+
 const TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const GUILD_ID = process.env.GUILD_ID;
 
 if (!TOKEN) {
-  console.log("❌ DISCORD_TOKEN ناقص");
+  console.log("❌ DISCORD_TOKEN غير موجود");
   process.exit(1);
 }
 
 if (!GROQ_KEY) {
-  console.log("❌ GROQ_API_KEY ناقص");
+  console.log("❌ GROQ_API_KEY غير موجود");
   process.exit(1);
 }
 
 if (!GUILD_ID) {
-  console.log("❌ GUILD_ID ناقص");
+  console.log("❌ GUILD_ID غير موجود");
   process.exit(1);
 }
 
-// ================================
-// إعدادات السيرفر
-// ================================
+// ==========================================
+// SETTINGS
+// ==========================================
 
 let aiChat = null;
 let aiCategory = null;
 
 const aiTickets = new Set();
 
-// ================================
-// الأوامر
-// ================================
+// ==========================================
+// COMMANDS
+// ==========================================
 
 const commands = [
 
+  // /ai-chat
   new SlashCommandBuilder()
     .setName("ai-chat")
     .setDescription("تحديد شات الذكاء الاصطناعي")
@@ -65,43 +74,46 @@ const commands = [
         .addChannelTypes(ChannelType.GuildText)
     ),
 
+  // /ai-category
   new SlashCommandBuilder()
     .setName("ai-category")
     .setDescription("تحديد كاتيجوري تكتات AI")
     .addChannelOption(option =>
       option
         .setName("category")
-        .setDescription("اختر الكاتيجوري")
+        .setDescription("اختر كاتيجوري AI")
         .setRequired(true)
         .addChannelTypes(ChannelType.GuildCategory)
     ),
 
+  // /ai-ticket
   new SlashCommandBuilder()
     .setName("ai-ticket")
-    .setDescription("إرسال بانل تذاكر AI"),
+    .setDescription("إرسال بانل تكت AI"),
 
+  // /ai-stats
   new SlashCommandBuilder()
     .setName("ai-stats")
     .setDescription("عرض حالة نظام AI")
 
 ].map(command => command.toJSON());
 
-// ================================
-// تشغيل البوت
-// ================================
+// ==========================================
+// READY
+// ==========================================
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
 
-  console.log("================================");
+  console.log("=================================");
   console.log("🤖 TicketAI Online");
   console.log("👤 " + client.user.tag);
-  console.log("================================");
+  console.log("=================================");
 
   const guild = client.guilds.cache.get(GUILD_ID);
 
   if (!guild) {
     console.log("❌ البوت غير موجود في السيرفر");
-    console.log("تأكد من GUILD_ID");
+    console.log("GUILD_ID:", GUILD_ID);
     return;
   }
 
@@ -120,11 +132,12 @@ client.once("ready", async () => {
   }
 
   client.user.setActivity("AI Support 🤖");
+
 });
 
-// ================================
+// ==========================================
 // GROQ AI
-// ================================
+// ==========================================
 
 async function askAI(text) {
 
@@ -142,19 +155,21 @@ async function askAI(text) {
 
         body: JSON.stringify({
 
-          model: "llama-3.1-8b-instant",
+          model: "openai/gpt-oss-20b",
 
           messages: [
 
             {
               role: "system",
+
               content:
-                "أنت بوت دعم فني عربي في Discord. " +
+                "أنت بوت دعم فني عربي داخل Discord. " +
+                "تكلم بالعربية وبشكل واضح ومختصر. " +
                 "ساعد المستخدم في مشاكل Discord والسيرفرات والبوتات والتكتات. " +
-                "تكلم بالعربية وبأسلوب واضح ومختصر. " +
-                "إذا ذكر المستخدم مشكلة، حاول إعطاءه حل عملي. " +
-                "إذا قال إن شخصاً سبه أو أساء إليه، اطلب منه إرسال صورة أو دليل. " +
-                "لا تدّعي أنك موظف حقيقي."
+                "إذا قال المستخدم إن شخصاً سبه أو أساء له، اطلب منه إرسال صورة أو دليل. " +
+                "إذا كانت المشكلة تحتاج موظف دعم، أخبره أن يطلب تدخل الدعم. " +
+                "لا تدعي أنك موظف حقيقي. " +
+                "لا تخترع معلومات غير مؤكدة."
             },
 
             {
@@ -165,7 +180,10 @@ async function askAI(text) {
           ],
 
           temperature: 0.5,
-          max_tokens: 500
+
+          max_tokens: 700,
+
+          include_reasoning: false
 
         })
       }
@@ -176,42 +194,52 @@ async function askAI(text) {
     if (!response.ok) {
 
       console.log("❌ GROQ ERROR:");
-      console.log(data);
+      console.log(JSON.stringify(data, null, 2));
 
-      return "❌ الذكاء الاصطناعي غير متاح حاليًا.";
+      return "❌ الذكاء الاصطناعي غير متاح حاليًا. حاول مرة ثانية.";
 
     }
 
-    return (
-      data.choices?.[0]?.message?.content ||
-      "❌ لم أستطع إنشاء رد."
-    );
+    const answer =
+      data?.choices?.[0]?.message?.content;
+
+    if (!answer) {
+
+      console.log("❌ Groq لم يرجع جواب");
+      console.log(data);
+
+      return "❌ لم أستطع إنشاء رد.";
+
+    }
+
+    return answer;
 
   } catch (error) {
 
-    console.log("❌ AI ERROR:");
+    console.log("❌ AI CONNECTION ERROR:");
     console.error(error);
 
     return "❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.";
 
   }
+
 }
 
-// ================================
-// الأوامر والتفاعلات
-// ================================
+// ==========================================
+// INTERACTIONS
+// ==========================================
 
 client.on("interactionCreate", async interaction => {
 
-  // ==============================
+  // ========================================
   // SLASH COMMANDS
-  // ==============================
+  // ========================================
 
   if (interaction.isChatInputCommand()) {
 
-    // ------------------------------
+    // --------------------------------------
     // /ai-chat
-    // ------------------------------
+    // --------------------------------------
 
     if (interaction.commandName === "ai-chat") {
 
@@ -222,7 +250,7 @@ client.on("interactionCreate", async interaction => {
       ) {
 
         return interaction.reply({
-          content: "❌ تحتاج Administrator.",
+          content: "❌ تحتاج Administrator لاستخدام هذا الأمر.",
           ephemeral: true
         });
 
@@ -241,9 +269,9 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // ------------------------------
+    // --------------------------------------
     // /ai-category
-    // ------------------------------
+    // --------------------------------------
 
     if (interaction.commandName === "ai-category") {
 
@@ -254,7 +282,7 @@ client.on("interactionCreate", async interaction => {
       ) {
 
         return interaction.reply({
-          content: "❌ تحتاج Administrator.",
+          content: "❌ تحتاج Administrator لاستخدام هذا الأمر.",
           ephemeral: true
         });
 
@@ -273,9 +301,9 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // ------------------------------
+    // --------------------------------------
     // /ai-ticket
-    // ------------------------------
+    // --------------------------------------
 
     if (interaction.commandName === "ai-ticket") {
 
@@ -286,7 +314,7 @@ client.on("interactionCreate", async interaction => {
       ) {
 
         return interaction.reply({
-          content: "❌ تحتاج Administrator.",
+          content: "❌ تحتاج Administrator لاستخدام هذا الأمر.",
           ephemeral: true
         });
 
@@ -296,7 +324,7 @@ client.on("interactionCreate", async interaction => {
 
         return interaction.reply({
           content:
-            "❌ استخدم `/ai-category` أولاً.",
+            "❌ حدد الكاتيجوري أولاً باستخدام `/ai-category`.",
           ephemeral: true
         });
 
@@ -307,18 +335,22 @@ client.on("interactionCreate", async interaction => {
         .setTitle("🤖 الدعم الفني AI")
 
         .setDescription(
-          "تحتاج مساعدة؟\n\n" +
-          "اضغط الزر بالأسفل لفتح تذكرة مع الذكاء الاصطناعي."
+          "مرحباً بك في الدعم الفني.\n\n" +
+          "اضغط الزر بالأسفل لفتح تكت خاصة بالذكاء الاصطناعي."
         )
 
-        .setColor(0x5865F2);
+        .setColor(0x5865F2)
+
+        .setFooter({
+          text: "AI Support"
+        });
 
       const row =
         new ActionRowBuilder()
           .addComponents(
 
             new ButtonBuilder()
-              .setCustomId("open_ai_ticket")
+              .setCustomId("open_ai")
               .setLabel("فتح تذكرة")
               .setEmoji("🎫")
               .setStyle(ButtonStyle.Primary)
@@ -332,45 +364,46 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // ------------------------------
+    // --------------------------------------
     // /ai-stats
-    // ------------------------------
+    // --------------------------------------
 
     if (interaction.commandName === "ai-stats") {
 
       return interaction.reply({
 
         content:
-          "🤖 **TicketAI**\n\n" +
-
-          `🟢 AI: Online\n` +
-
+          "🤖 **حالة AI**\n\n" +
+          "🟢 Bot: Online\n" +
           `💬 AI Chat: ${
             aiChat
               ? `<#${aiChat}>`
               : "غير محدد"
           }\n` +
-
           `📁 AI Category: ${
             aiCategory
               ? `<#${aiCategory}>`
               : "غير محددة"
           }\n` +
-
           `🎫 AI Tickets: ${aiTickets.size}`
 
       });
 
     }
+
   }
 
-  // ==============================
-  // فتح التكت
-  // ==============================
+  // ========================================
+  // BUTTONS
+  // ========================================
 
   if (interaction.isButton()) {
 
-    if (interaction.customId === "open_ai_ticket") {
+    // --------------------------------------
+    // OPEN AI TICKET
+    // --------------------------------------
+
+    if (interaction.customId === "open_ai") {
 
       if (!aiCategory) {
 
@@ -387,8 +420,8 @@ client.on("interactionCreate", async interaction => {
         const username =
           interaction.user.username
             .toLowerCase()
-            .replace(/[^a-z0-9-]/g, "-")
-            .slice(0, 25);
+            .replace(/[^a-z0-9]/g, "-")
+            .slice(0, 50);
 
         const channel =
           await interaction.guild.channels.create({
@@ -401,15 +434,16 @@ client.on("interactionCreate", async interaction => {
 
             permissionOverwrites: [
 
+              // Everyone
               {
-                id:
-                  interaction.guild.roles.everyone.id,
+                id: interaction.guild.roles.everyone.id,
 
                 deny: [
                   PermissionFlagsBits.ViewChannel
                 ]
               },
 
+              // User
               {
                 id: interaction.user.id,
 
@@ -421,6 +455,7 @@ client.on("interactionCreate", async interaction => {
                 ]
               },
 
+              // Bot
               {
                 id: client.user.id,
 
@@ -443,7 +478,7 @@ client.on("interactionCreate", async interaction => {
             .addComponents(
 
               new ButtonBuilder()
-                .setCustomId("close_ai_ticket")
+                .setCustomId("close_ai")
                 .setLabel("إغلاق التكت")
                 .setEmoji("🔒")
                 .setStyle(ButtonStyle.Danger)
@@ -453,9 +488,22 @@ client.on("interactionCreate", async interaction => {
         await channel.send({
 
           content:
-            `${interaction.user}\n\n` +
-            "🤖 **مرحبًا بك في AI Support**\n" +
-            "اكتب مشكلتك هنا وسأحاول مساعدتك.",
+            `${interaction.user}`,
+
+          embeds: [
+
+            new EmbedBuilder()
+
+              .setTitle("🤖 AI Support")
+
+              .setDescription(
+                "مرحباً بك في الدعم الفني AI.\n\n" +
+                "اكتب مشكلتك هنا وسأحاول مساعدتك."
+              )
+
+              .setColor(0x5865F2)
+
+          ],
 
           components: [closeRow]
 
@@ -464,7 +512,7 @@ client.on("interactionCreate", async interaction => {
         return interaction.reply({
 
           content:
-            `✅ تم فتح تكت AI: ${channel}`,
+            `✅ تم فتح تكتك ${channel}`,
 
           ephemeral: true
 
@@ -472,32 +520,37 @@ client.on("interactionCreate", async interaction => {
 
       } catch (error) {
 
+        console.log("❌ CREATE TICKET ERROR:");
         console.error(error);
 
         return interaction.reply({
 
           content:
-            "❌ فشل إنشاء التكت. تأكد أن البوت معه Manage Channels.",
+            "❌ حدث خطأ أثناء فتح التكت.",
 
           ephemeral: true
 
         });
 
       }
+
     }
 
-    // ==============================
-    // إغلاق التكت
-    // ==============================
+    // --------------------------------------
+    // CLOSE AI TICKET
+    // --------------------------------------
 
-    if (interaction.customId === "close_ai_ticket") {
+    if (interaction.customId === "close_ai") {
 
       if (!aiTickets.has(interaction.channel.id)) {
 
         return interaction.reply({
+
           content:
             "❌ هذه ليست AI Ticket.",
+
           ephemeral: true
+
         });
 
       }
@@ -506,7 +559,9 @@ client.on("interactionCreate", async interaction => {
         "🔒 سيتم إغلاق التكت بعد 3 ثوانٍ."
       );
 
-      aiTickets.delete(interaction.channel.id);
+      aiTickets.delete(
+        interaction.channel.id
+      );
 
       setTimeout(() => {
 
@@ -522,27 +577,26 @@ client.on("interactionCreate", async interaction => {
 
 });
 
-// ================================
-// رسائل AI
-// ================================
+// ==========================================
+// MESSAGE AI
+// ==========================================
 
 client.on("messageCreate", async message => {
 
+  // تجاهل البوتات
   if (message.author.bot) return;
 
+  // تجاهل الخاص
   if (!message.guild) return;
 
-  // فقط الشات الذي حددته
-  const isAIChat =
-    message.channel.id === aiChat;
-
-  // أو تكت AI
-  const isAITicket =
+  // فقط AI Chat أو AI Tickets
+  const allowed =
+    message.channel.id === aiChat ||
     aiTickets.has(message.channel.id);
 
-  // تجاهل كل شيء آخر
-  if (!isAIChat && !isAITicket) return;
+  if (!allowed) return;
 
+  // تجاهل الرسائل الفارغة
   if (!message.content.trim()) return;
 
   try {
@@ -565,26 +619,39 @@ client.on("messageCreate", async message => {
 
   } catch (error) {
 
+    console.log("❌ MESSAGE ERROR:");
     console.error(error);
 
   }
 
 });
 
-// ================================
-// أخطاء
-// ================================
+// ==========================================
+// ERRORS
+// ==========================================
 
-process.on("unhandledRejection", error => {
-  console.error("❌ Unhandled:", error);
-});
+process.on(
+  "unhandledRejection",
+  error => {
 
-process.on("uncaughtException", error => {
-  console.error("❌ Exception:", error);
-});
+    console.log("❌ Unhandled Rejection:");
+    console.error(error);
 
-// ================================
+  }
+);
+
+process.on(
+  "uncaughtException",
+  error => {
+
+    console.log("❌ Uncaught Exception:");
+    console.error(error);
+
+  }
+);
+
+// ==========================================
 // LOGIN
-// ================================
+// ==========================================
 
 client.login(TOKEN);
