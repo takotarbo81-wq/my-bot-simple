@@ -14,30 +14,37 @@ const {
   Routes,
 } = require("discord.js");
 
-// =========================
-// CONFIG
-// =========================
+// ======================================================
+// VARIABLES
+// ======================================================
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID;
 
+const AI_MODEL = "llama-3.1-8b-instant";
+
+// ======================================================
+// CHECK VARIABLES
+// ======================================================
+
 if (!TOKEN) {
-  console.error("❌ DISCORD_TOKEN غير موجود في Variables");
+  console.error("❌ DISCORD_TOKEN غير موجود");
   process.exit(1);
 }
 
 if (!SUPPORT_ROLE_ID) {
-  console.error("❌ SUPPORT_ROLE_ID غير موجود في Variables");
+  console.error("❌ SUPPORT_ROLE_ID غير موجود");
   process.exit(1);
 }
 
-// Groq model سريع
-const AI_MODEL = "llama-3.1-8b-instant";
+if (!GROQ_API_KEY) {
+  console.warn("⚠️ GROQ_API_KEY غير موجود - الذكاء الاصطناعي لن يعمل");
+}
 
-// =========================
+// ======================================================
 // CLIENT
-// =========================
+// ======================================================
 
 const client = new Client({
   intents: [
@@ -47,16 +54,33 @@ const client = new Client({
   ],
 });
 
-// =========================
-// DATABASE بسيط
-// =========================
+// ======================================================
+// BOT DATABASE
+// ======================================================
 
-const settings = new Map();
-const ticketStats = new Map();
+// لكل سيرفر
+// categoryId = كاتيجوري التكتات
+// ticketIds = التكتات التي أنشأها هذا البوت
+// stats = الإحصائيات
 
-// =========================
+const database = new Map();
+
+function getGuildData(guildId) {
+  if (!database.has(guildId)) {
+    database.set(guildId, {
+      categoryId: null,
+      ticketIds: new Set(),
+      opened: 0,
+      closed: 0,
+    });
+  }
+
+  return database.get(guildId);
+}
+
+// ======================================================
 // SLASH COMMANDS
-// =========================
+// ======================================================
 
 const commands = [
   new SlashCommandBuilder()
@@ -65,11 +89,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("close")
-    .setDescription("إغلاق التكت"),
+    .setDescription("إغلاق التكت الحالي"),
 
   new SlashCommandBuilder()
     .setName("promot")
-    .setDescription("تحويل التكت للدعم"),
+    .setDescription("تحويل التكت لفريق الدعم"),
 
   new SlashCommandBuilder()
     .setName("rename")
@@ -77,21 +101,21 @@ const commands = [
     .addStringOption(option =>
       option
         .setName("name")
-        .setDescription("الاسم الجديد")
+        .setDescription("الاسم الجديد للتكت")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("setup")
-    .setDescription("إعدادات البوت")
+    .setDescription("إعداد البوت")
     .addSubcommand(sub =>
       sub
         .setName("category")
-        .setDescription("تحديد كاتيجوري التكت")
+        .setDescription("تحديد كاتيجوري التكتات")
         .addChannelOption(option =>
           option
             .setName("category")
-            .setDescription("اختار الكاتيجوري")
+            .setDescription("اختر الكاتيجوري")
             .addChannelTypes(ChannelType.GuildCategory)
             .setRequired(true)
         )
@@ -99,21 +123,22 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("stats")
-    .setDescription("إحصائيات التكتات"),
+    .setDescription("إحصائيات تكتات هذا البوت"),
 ].map(command => command.toJSON());
 
-// =========================
-// REGISTER COMMANDS
-// =========================
+// ======================================================
+// READY
+// ======================================================
 
 client.once("ready", async () => {
-  console.log("================================");
-  console.log(`🤖 البوت شغال: ${client.user.tag}`);
-  console.log("🧠 AI: Groq / Llama 3.1 8B");
-  console.log("🎫 Ticket System: ON");
-  console.log("================================");
+  console.log("=================================");
+  console.log(`🤖 ${client.user.tag}`);
+  console.log("🎫 Ticket System: ONLINE");
+  console.log("🧠 AI: Groq");
+  console.log(`⚡ Model: ${AI_MODEL}`);
+  console.log("=================================");
 
-  client.user.setActivity("التذاكر 🛡️", {
+  client.user.setActivity("التذاكر 🎫", {
     type: 3,
   });
 
@@ -127,19 +152,32 @@ client.once("ready", async () => {
       }
     );
 
-    console.log("✅ تم تسجيل الأوامر");
+    console.log("✅ تم تسجيل جميع الأوامر");
   } catch (error) {
-    console.error("❌ خطأ تسجيل الأوامر:", error);
+    console.error("❌ خطأ تسجيل الأوامر:");
+    console.error(error);
   }
 });
 
-// =========================
-// AI
-// =========================
+// ======================================================
+// CHECK BOT'S TICKET
+// ======================================================
 
-async function askAI(message) {
+function isOurTicket(channel) {
+  if (!channel || !channel.guild) return false;
+
+  const data = getGuildData(channel.guild.id);
+
+  return data.ticketIds.has(channel.id);
+}
+
+// ======================================================
+// AI
+// ======================================================
+
+async function askAI(userMessage) {
   if (!GROQ_API_KEY) {
-    return "⚠️ مفتاح الذكاء الاصطناعي غير موجود.";
+    return "⚠️ الذكاء الاصطناعي غير مفعل حاليًا.";
   }
 
   try {
@@ -159,18 +197,28 @@ async function askAI(message) {
           messages: [
             {
               role: "system",
-              content:
-                "أنت بوت دعم فني داخل Discord. رد بالعربية بشكل مختصر ومفيد. لا تدّعي أنك موظف بشري. إذا كانت المشكلة تحتاج تدخل موظف دعم، أخبر المستخدم أن يشرح المشكلة بوضوح.",
+              content: `
+أنت بوت دعم فني داخل Discord.
+
+قواعدك:
+- تكلم بالعربية.
+- كن مختصرًا وواضحًا.
+- ساعد المستخدم في مشاكل Discord والسيرفر والتذاكر.
+- لا تدّعي أنك شخص حقيقي.
+- إذا كانت المشكلة تحتاج تدخل موظف، قل للمستخدم أن يشرح المشكلة بوضوح.
+- لا تعطي معلومات خطيرة أو ضارة.
+- لا تكرر كلام المستخدم بدون فائدة.
+              `,
             },
 
             {
               role: "user",
-              content: message,
+              content: userMessage,
             },
           ],
 
           temperature: 0.5,
-          max_tokens: 300,
+          max_tokens: 400,
         }),
       }
     );
@@ -178,51 +226,62 @@ async function askAI(message) {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("Groq Error:", data);
+      console.error("❌ GROQ ERROR:");
+      console.error(data);
 
-      return "❌ حصل خطأ مؤقت في الذكاء الاصطناعي.";
+      return "❌ صار خطأ مؤقت في الذكاء الاصطناعي، حاول مرة ثانية.";
     }
 
-    return (
-      data?.choices?.[0]?.message?.content ||
-      "ما قدرت أفهم سؤالك، اشرح المشكلة بطريقة أوضح."
-    );
+    const answer =
+      data?.choices?.[0]?.message?.content;
+
+    if (!answer) {
+      return "❌ ما قدرت أطلع رد حاليًا.";
+    }
+
+    return answer;
   } catch (error) {
-    console.error("AI ERROR:", error);
+    console.error("❌ AI ERROR:");
+    console.error(error);
 
     return "❌ تعذر الاتصال بالذكاء الاصطناعي حاليًا.";
   }
 }
 
-// =========================
-// COMMAND HANDLER
-// =========================
+// ======================================================
+// SLASH COMMANDS
+// ======================================================
 
 client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
   try {
-    if (!interaction.isChatInputCommand()) return;
 
-    const command = interaction.commandName;
-
-    // =====================
+    // ==================================================
     // PANEL
-    // =====================
+    // ==================================================
 
-    if (command === "panel") {
+    if (interaction.commandName === "panel") {
+
       const embed = new EmbedBuilder()
         .setTitle("🎫 الدعم الفني")
         .setDescription(
-          "اضغط الزر بالأسفل لفتح تذكرة مع فريق الدعم."
+          "اضغط على الزر بالأسفل لفتح تذكرة مع فريق الدعم.\n\n" +
+          "🤖 سيتم مساعدتك بواسطة نظام الدعم والذكاء الاصطناعي."
         )
-        .setColor(0x5865f2);
+        .setColor(0x5865f2)
+        .setFooter({
+          text: "Ticket AI",
+        });
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("open_ticket")
-          .setLabel("فتح تذكرة")
-          .setEmoji("🎫")
-          .setStyle(ButtonStyle.Primary)
-      );
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId("ticket_ai_open")
+            .setLabel("فتح تذكرة")
+            .setEmoji("🎫")
+            .setStyle(ButtonStyle.Primary)
+        );
 
       await interaction.reply({
         embeds: [embed],
@@ -232,102 +291,116 @@ client.on("interactionCreate", async interaction => {
       return;
     }
 
-    // =====================
+    // ==================================================
     // SETUP CATEGORY
-    // =====================
+    // ==================================================
 
-    if (command === "setup") {
-      if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-        return interaction.reply({
+    if (
+      interaction.commandName === "setup" &&
+      interaction.options.getSubcommand() === "category"
+    ) {
+
+      if (
+        !interaction.memberPermissions.has(
+          PermissionFlagsBits.Administrator
+        )
+      ) {
+        await interaction.reply({
           content: "❌ تحتاج صلاحية Administrator.",
           ephemeral: true,
         });
+
+        return;
       }
 
-      const category = interaction.options.getChannel("category");
+      const category =
+        interaction.options.getChannel("category");
 
-      settings.set(interaction.guild.id, {
-        categoryId: category.id,
-      });
+      const data = getGuildData(interaction.guild.id);
+
+      data.categoryId = category.id;
 
       await interaction.reply({
-        content: `✅ تم تحديد كاتيجوري التكتات: ${category}`,
+        content:
+          `✅ تم تحديد كاتيجوري التكتات:\n${category}`,
         ephemeral: true,
       });
 
       return;
     }
 
-    // =====================
-    // RENAME
-    // =====================
+    // ==================================================
+    // VERIFY TICKET COMMANDS
+    // ==================================================
 
-    if (command === "rename") {
-      if (!interaction.channel.name.startsWith("ticket-")) {
-        return interaction.reply({
-          content: "❌ هذا الأمر يستخدم داخل التكت فقط.",
+    if (
+      ["close", "promot", "rename"].includes(
+        interaction.commandName
+      )
+    ) {
+
+      if (!isOurTicket(interaction.channel)) {
+        await interaction.reply({
+          content:
+            "❌ هذا التكت ليس تابعًا لهذا البوت.",
           ephemeral: true,
         });
+
+        return;
       }
-
-      const name = interaction.options.getString("name");
-
-      const cleanName = name
-        .toLowerCase()
-        .replace(/[^a-zA-Z0-9\u0600-\u06FF-_]/g, "-")
-        .slice(0, 90);
-
-      await interaction.channel.setName(`ticket-${cleanName}`);
-
-      await interaction.reply(`✅ تم تغيير اسم التكت إلى **ticket-${cleanName}**`);
-
-      return;
     }
 
-    // =====================
+    // ==================================================
     // CLOSE
-    // =====================
+    // ==================================================
 
-    if (command === "close") {
-      if (!interaction.channel.name.startsWith("ticket-")) {
-        return interaction.reply({
-          content: "❌ هذا الأمر يستخدم داخل التكت فقط.",
-          ephemeral: true,
-        });
-      }
+    if (interaction.commandName === "close") {
 
-      await interaction.reply("🔒 سيتم إغلاق التكت خلال 5 ثوانٍ...");
+      await interaction.reply(
+        "🔒 سيتم إغلاق التكت خلال 5 ثوانٍ..."
+      );
+
+      const data =
+        getGuildData(interaction.guild.id);
+
+      data.ticketIds.delete(interaction.channel.id);
+      data.closed++;
 
       setTimeout(async () => {
         try {
-          await interaction.channel.delete();
+          await interaction.channel.delete(
+            "Ticket closed"
+          );
         } catch (error) {
-          console.error("Close error:", error);
+          console.error(
+            "❌ Close error:",
+            error
+          );
         }
       }, 5000);
 
       return;
     }
 
-    // =====================
+    // ==================================================
     // PROMOT
-    // =====================
+    // ==================================================
 
-    if (command === "promot") {
-      if (!interaction.channel.name.startsWith("ticket-")) {
-        return interaction.reply({
-          content: "❌ هذا الأمر يستخدم داخل التكت فقط.",
-          ephemeral: true,
-        });
-      }
+    if (interaction.commandName === "promot") {
 
-      const role = interaction.guild.roles.cache.get(SUPPORT_ROLE_ID);
+      const role =
+        interaction.guild.roles.cache.get(
+          SUPPORT_ROLE_ID
+        );
 
       if (!role) {
-        return interaction.reply({
-          content: "❌ رتبة الدعم غير موجودة. تأكد من SUPPORT_ROLE_ID.",
+        await interaction.reply({
+          content:
+            "❌ رتبة الدعم غير موجودة. تأكد من SUPPORT_ROLE_ID.",
           ephemeral: true,
         });
+
+        return;
       }
 
       await interaction.channel.permissionOverwrites.edit(
@@ -340,35 +413,66 @@ client.on("interactionCreate", async interaction => {
       );
 
       await interaction.reply(
-        `🛡️ تم تحويل التكت إلى فريق الدعم.`
+        `🛡️ تم تحويل التكت إلى فريق الدعم.\n\n${role}`
       );
 
       return;
     }
 
-    // =====================
+    // ==================================================
+    // RENAME
+    // ==================================================
+
+    if (interaction.commandName === "rename") {
+
+      const name =
+        interaction.options.getString("name");
+
+      const cleanName = name
+        .trim()
+        .toLowerCase()
+        .replace(
+          /[^a-zA-Z0-9\u0600-\u06FF-_]/g,
+          "-"
+        )
+        .slice(0, 80);
+
+      await interaction.channel.setName(
+        `ticket-${cleanName}`
+      );
+
+      await interaction.reply(
+        `✅ تم تغيير اسم التكت إلى:\n\`ticket-${cleanName}\``
+      );
+
+      return;
+    }
+
+    // ==================================================
     // STATS
-    // =====================
+    // ==================================================
 
-    if (command === "stats") {
-      const guildId = interaction.guild.id;
+    if (interaction.commandName === "stats") {
 
-      const stats = ticketStats.get(guildId) || {
-        opened: 0,
-        closed: 0,
-      };
+      const data =
+        getGuildData(interaction.guild.id);
 
       const embed = new EmbedBuilder()
-        .setTitle("📊 إحصائيات التكتات")
+        .setTitle("📊 إحصائيات Ticket AI")
         .addFields(
           {
             name: "🎫 التكتات المفتوحة",
-            value: `${stats.opened}`,
+            value: `${data.ticketIds.size}`,
+            inline: true,
+          },
+          {
+            name: "📂 إجمالي التكتات",
+            value: `${data.opened}`,
             inline: true,
           },
           {
             name: "🔒 التكتات المغلقة",
-            value: `${stats.closed}`,
+            value: `${data.closed}`,
             inline: true,
           }
         )
@@ -380,204 +484,463 @@ client.on("interactionCreate", async interaction => {
 
       return;
     }
-  } catch (error) {
-    console.error("COMMAND ERROR:", error);
 
-    if (!interaction.replied && !interaction.deferred) {
+  } catch (error) {
+
+    console.error(
+      "❌ COMMAND ERROR:",
+      error
+    );
+
+    if (
+      !interaction.replied &&
+      !interaction.deferred
+    ) {
       await interaction.reply({
-        content: "❌ صار خطأ أثناء تنفيذ الأمر.",
+        content:
+          "❌ حدث خطأ أثناء تنفيذ الأمر.",
         ephemeral: true,
       });
     }
   }
 });
 
-// =========================
-// BUTTONS
-// =========================
+// ======================================================
+// BUTTON SYSTEM
+// ======================================================
 
 client.on("interactionCreate", async interaction => {
+
+  if (!interaction.isButton()) return;
+
   try {
-    if (!interaction.isButton()) return;
 
-    // =====================
+    // ==================================================
     // OPEN TICKET
-    // =====================
+    // ==================================================
 
-    if (interaction.customId === "open_ticket") {
-      const guild = interaction.guild;
+    if (
+      interaction.customId === "ticket_ai_open"
+    ) {
 
-      const oldTicket = guild.channels.cache.find(
-        channel =>
-          channel.name === `ticket-${interaction.user.id}` &&
-          channel.type === ChannelType.GuildText
-      );
+      const guild =
+        interaction.guild;
 
-      if (oldTicket) {
-        return interaction.reply({
-          content: `❌ عندك تكت مفتوح بالفعل: ${oldTicket}`,
+      const data =
+        getGuildData(guild.id);
+
+      // ----------------------------------------------
+      // منع تكتين لنفس الشخص
+      // ----------------------------------------------
+
+      const existingTicket =
+        [...data.ticketIds]
+          .map(id =>
+            guild.channels.cache.get(id)
+          )
+          .find(channel => {
+
+            if (!channel) return false;
+
+            return channel.topic ===
+              `TicketOwner:${interaction.user.id}`;
+          });
+
+      if (existingTicket) {
+
+        await interaction.reply({
+          content:
+            `❌ عندك تكت مفتوح بالفعل:\n${existingTicket}`,
           ephemeral: true,
         });
+
+        return;
       }
 
-      const serverSettings = settings.get(guild.id);
+      // ----------------------------------------------
+      // PERMISSIONS
+      // ----------------------------------------------
 
-      const channelOptions = {
-        name: `ticket-${interaction.user.id}`,
-        type: ChannelType.GuildText,
+      const permissions = [
 
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone.id,
-            deny: [PermissionFlagsBits.ViewChannel],
-          },
+        {
+          id: guild.roles.everyone.id,
 
-          {
-            id: interaction.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-            ],
-          },
+          deny: [
+            PermissionFlagsBits.ViewChannel,
+          ],
+        },
 
-          {
-            id: SUPPORT_ROLE_ID,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-            ],
-          },
-        ],
-      };
+        {
+          id: interaction.user.id,
 
-      if (serverSettings?.categoryId) {
-        channelOptions.parent = serverSettings.categoryId;
-      }
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks,
+          ],
+        },
 
-      const channel = await guild.channels.create(channelOptions);
+        {
+          id: SUPPORT_ROLE_ID,
 
-      const currentStats = ticketStats.get(guild.id) || {
-        opened: 0,
-        closed: 0,
-      };
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+          ],
+        },
+      ];
 
-      currentStats.opened++;
-      ticketStats.set(guild.id, currentStats);
+      // ----------------------------------------------
+      // CREATE CHANNEL
+      // ----------------------------------------------
 
-      const embed = new EmbedBuilder()
-        .setTitle("🎫 تذكرة الدعم")
-        .setDescription(
-          `مرحبًا ${interaction.user} 👋\n\n` +
-          `اكتب مشكلتك بالتفصيل وسأحاول مساعدتك بالذكاء الاصطناعي.\n\n` +
-          `🛡️ إذا احتجت موظف دعم، استخدم **/promot**.`
-        )
-        .setColor(0x5865f2);
+      const channel =
+        await guild.channels.create({
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("close_ticket")
-          .setLabel("إغلاق التكت")
-          .setEmoji("🔒")
-          .setStyle(ButtonStyle.Danger)
-      );
+          name:
+            `ticket-${interaction.user.username}`
+              .toLowerCase()
+              .replace(
+                /[^a-z0-9-_]/g,
+                "-"
+              )
+              .slice(0, 80),
+
+          type:
+            ChannelType.GuildText,
+
+          parent:
+            data.categoryId || undefined,
+
+          topic:
+            `TicketOwner:${interaction.user.id}`,
+
+          permissionOverwrites:
+            permissions,
+        });
+
+      // ----------------------------------------------
+      // SAVE TICKET
+      // ----------------------------------------------
+
+      data.ticketIds.add(channel.id);
+      data.opened++;
+
+      // ----------------------------------------------
+      // EMBED
+      // ----------------------------------------------
+
+      const embed =
+        new EmbedBuilder()
+          .setTitle("🎫 تذكرة الدعم")
+          .setDescription(
+            `مرحبًا ${interaction.user} 👋\n\n` +
+
+            `اكتب مشكلتك هنا وسأحاول مساعدتك.\n\n` +
+
+            `🤖 **الذكاء الاصطناعي:** متاح\n` +
+
+            `🛡️ **فريق الدعم:** يمكنه دخول التكت\n\n` +
+
+            `إذا احتجت تحويل المشكلة للدعم استخدم:\n` +
+
+            `\`/promot\``
+          )
+          .setColor(0x5865f2);
+
+      // ----------------------------------------------
+      // BUTTONS
+      // ----------------------------------------------
+
+      const row =
+        new ActionRowBuilder()
+          .addComponents(
+
+            new ButtonBuilder()
+              .setCustomId(
+                "ticket_ai_close"
+              )
+              .setLabel("إغلاق")
+              .setEmoji("🔒")
+              .setStyle(
+                ButtonStyle.Danger
+              ),
+
+            new ButtonBuilder()
+              .setCustomId(
+                "ticket_ai_support"
+              )
+              .setLabel("تحويل للدعم")
+              .setEmoji("🛡️")
+              .setStyle(
+                ButtonStyle.Secondary
+              )
+          );
+
+      // ----------------------------------------------
+      // SEND
+      // ----------------------------------------------
 
       await channel.send({
-        content: `${interaction.user}`,
+
+        content:
+          `${interaction.user}`,
+
         embeds: [embed],
+
         components: [row],
       });
 
       await interaction.reply({
-        content: `✅ تم فتح التكت: ${channel}`,
+
+        content:
+          `✅ تم فتح تذكرتك:\n${channel}`,
+
         ephemeral: true,
       });
 
       return;
     }
 
-    // =====================
+    // ==================================================
     // CLOSE BUTTON
-    // =====================
+    // ==================================================
 
-    if (interaction.customId === "close_ticket") {
-      if (!interaction.channel.name.startsWith("ticket-")) {
-        return interaction.reply({
-          content: "❌ هذا ليس تكت.",
+    if (
+      interaction.customId ===
+      "ticket_ai_close"
+    ) {
+
+      if (!isOurTicket(interaction.channel)) {
+
+        await interaction.reply({
+          content:
+            "❌ هذا التكت ليس تابعًا لهذا البوت.",
           ephemeral: true,
         });
+
+        return;
       }
 
-      await interaction.reply("🔒 سيتم إغلاق التكت خلال 5 ثوانٍ...");
+      const data =
+        getGuildData(
+          interaction.guild.id
+        );
+
+      data.ticketIds.delete(
+        interaction.channel.id
+      );
+
+      data.closed++;
+
+      await interaction.reply(
+        "🔒 سيتم إغلاق التكت خلال 5 ثوانٍ..."
+      );
 
       setTimeout(async () => {
+
         try {
-          const guildId = interaction.guild.id;
 
-          const stats = ticketStats.get(guildId) || {
-            opened: 0,
-            closed: 0,
-          };
+          await interaction.channel.delete(
+            "Ticket closed by button"
+          );
 
-          stats.closed++;
-
-          ticketStats.set(guildId, stats);
-
-          await interaction.channel.delete();
         } catch (error) {
-          console.error(error);
+
+          console.error(
+            "❌ Ticket delete error:",
+            error
+          );
+
         }
+
       }, 5000);
+
+      return;
     }
+
+    // ==================================================
+    // SUPPORT BUTTON
+    // ==================================================
+
+    if (
+      interaction.customId ===
+      "ticket_ai_support"
+    ) {
+
+      if (!isOurTicket(interaction.channel)) {
+
+        await interaction.reply({
+          content:
+            "❌ هذا التكت ليس تابعًا لهذا البوت.",
+          ephemeral: true,
+        });
+
+        return;
+      }
+
+      const role =
+        interaction.guild.roles.cache.get(
+          SUPPORT_ROLE_ID
+        );
+
+      if (!role) {
+
+        await interaction.reply({
+          content:
+            "❌ رتبة الدعم غير موجودة.",
+          ephemeral: true,
+        });
+
+        return;
+      }
+
+      await interaction.channel.permissionOverwrites.edit(
+        role.id,
+        {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+        }
+      );
+
+      await interaction.reply(
+        `🛡️ تم تحويل التكت إلى فريق الدعم.\n${role}`
+      );
+
+      return;
+    }
+
   } catch (error) {
-    console.error("BUTTON ERROR:", error);
+
+    console.error(
+      "❌ BUTTON ERROR:",
+      error
+    );
+
+    if (
+      !interaction.replied &&
+      !interaction.deferred
+    ) {
+
+      await interaction.reply({
+        content:
+          "❌ حدث خطأ.",
+        ephemeral: true,
+      });
+
+    }
   }
 });
 
-// =========================
+// ======================================================
 // AI MESSAGE SYSTEM
-// =========================
+// ======================================================
 
 client.on("messageCreate", async message => {
+
   try {
+
+    // البوتات لا نرد عليها
     if (message.author.bot) return;
 
+    // DM لا
     if (!message.guild) return;
 
-    // AI يعمل فقط داخل التكت
-    if (!message.channel.name.startsWith("ticket-")) return;
+    // ----------------------------------------------
+    // أهم نقطة:
+    // لا نرد إلا على تكتات هذا البوت
+    // ----------------------------------------------
 
-    // تجاهل الأوامر
-    if (message.content.startsWith("/")) return;
+    if (!isOurTicket(message.channel)) {
+      return;
+    }
 
+    // تجاهل الرسائل الفارغة
     if (!message.content.trim()) return;
 
-    // حالة معالجة
-    const loading = await message.reply("🤖 جاري التفكير...");
+    // تجاهل slash commands
+    if (
+      message.content.startsWith("/")
+    ) {
+      return;
+    }
 
-    const answer = await askAI(message.content);
+    // ----------------------------------------------
+    // Typing
+    // ----------------------------------------------
 
-    await loading.edit(answer);
+    await message.channel.sendTyping();
+
+    // ----------------------------------------------
+    // AI
+    // ----------------------------------------------
+
+    const answer =
+      await askAI(message.content);
+
+    // ----------------------------------------------
+    // Discord max message
+    // ----------------------------------------------
+
+    if (answer.length <= 1900) {
+
+      await message.reply(answer);
+
+    } else {
+
+      const chunks =
+        answer.match(/[\s\S]{1,1900}/g);
+
+      for (const chunk of chunks) {
+
+        await message.channel.send(
+          chunk
+        );
+
+      }
+    }
+
   } catch (error) {
-    console.error("MESSAGE ERROR:", error);
+
+    console.error(
+      "❌ MESSAGE ERROR:",
+      error
+    );
+
   }
 });
 
-// =========================
+// ======================================================
 // ERRORS
-// =========================
+// ======================================================
 
-process.on("unhandledRejection", error => {
-  console.error("UNHANDLED REJECTION:", error);
-});
+process.on(
+  "unhandledRejection",
+  error => {
+    console.error(
+      "❌ UNHANDLED REJECTION:",
+      error
+    );
+  }
+);
 
-process.on("uncaughtException", error => {
-  console.error("UNCAUGHT EXCEPTION:", error);
-});
+process.on(
+  "uncaughtException",
+  error => {
+    console.error(
+      "❌ UNCAUGHT EXCEPTION:",
+      error
+    );
+  }
+);
 
-// =========================
+// ======================================================
 // LOGIN
-// =========================
+// ======================================================
 
 client.login(TOKEN);
