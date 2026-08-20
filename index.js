@@ -3,15 +3,12 @@ require("dotenv").config();
 const {
   Client,
   GatewayIntentBits,
+  PermissionsBitField,
   ChannelType,
-  PermissionFlagsBits,
-  SlashCommandBuilder,
-  REST,
-  Routes,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder
+  ButtonStyle
 } = require("discord.js");
 
 const Groq = require("groq-sdk");
@@ -20,6 +17,7 @@ const fs = require("fs");
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
   ]
@@ -29,37 +27,48 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
 });
 
-const MODEL = "openai/gpt-oss-20b";
+// ==============================
+// النماذج
+// ==============================
+
+const TEXT_MODEL = "openai/gpt-oss-20b";
+const VISION_MODEL = "qwen/qwen3.6-27b";
+
+// ==============================
+// إعدادات
+// ==============================
+
+const SUPPORT_ROLE_ID =
+  process.env.SUPPORT_ROLE_ID || "";
+
+const MAX_MEMORY = 12;
 
 const DATA_FILE = "./ticket-data.json";
 
 let data = {
-  categories: {},
-  memory: {},
+  memories: {},
+  ratings: {},
   stats: {
     opened: 0,
     closed: 0,
-    ratings: []
+    transferred: 0,
+    ratings: 0,
+    ratingSum: 0
   }
 };
 
-if (fs.existsSync(DATA_FILE)) {
-  try {
-    const saved = JSON.parse(
+// ==============================
+// تحميل البيانات
+// ==============================
+
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    data = JSON.parse(
       fs.readFileSync(DATA_FILE, "utf8")
     );
-
-    data = {
-      ...data,
-      ...saved,
-      stats: {
-        ...data.stats,
-        ...(saved.stats || {})
-      }
-    };
-  } catch (error) {
-    console.log("⚠️ تعذر قراءة البيانات القديمة.");
   }
+} catch (error) {
+  console.log("⚠️ لم يتم تحميل البيانات القديمة.");
 }
 
 function saveData() {
@@ -69,834 +78,682 @@ function saveData() {
       JSON.stringify(data, null, 2)
     );
   } catch (error) {
-    console.error("❌ خطأ حفظ البيانات:", error);
+    console.error(
+      "❌ Data Save Error:",
+      error.message
+    );
   }
 }
+
+// ==============================
+// تشغيل البوت
+// ==============================
+
+client.once("ready", () => {
+  console.log("================================");
+  console.log("🤖 TicketAI Online");
+  console.log("🧠 Text: " + TEXT_MODEL);
+  console.log("🖼️ Vision: " + VISION_MODEL);
+  console.log("================================");
+});
+
+// ==============================
+// هل القناة تكت؟
+/ ==============================
 
 function isTicket(channel) {
   if (!channel) return false;
 
+  if (
+    channel.type !== ChannelType.GuildText
+  ) {
+    return false;
+  }
+
+  const name =
+    channel.name.toLowerCase();
+
   return (
-    channel.type === ChannelType.GuildText &&
-    (
-      channel.name.startsWith("ticket-") ||
-      channel.name.startsWith("تكت-")
-    )
+    name.startsWith("ticket-") ||
+    name.startsWith("تكت-") ||
+    name.includes("ticket")
   );
 }
 
-// ======================================
-// الأوامر
-// ======================================
+// ==============================
+// الذاكرة
+// ==============================
 
-const commands = [
+function getMemory(channelId) {
+  if (!data.memories[channelId]) {
+    data.memories[channelId] = [];
+  }
 
-  new SlashCommandBuilder()
-    .setName("setup")
-    .setDescription("إعداد نظام التكت — Ticket Setup")
-    .addSubcommand(sub =>
-      sub
-        .setName("category")
-        .setDescription("تحديد كاتيجوري التكت")
-        .addChannelOption(option =>
-          option
-            .setName("category")
-            .setDescription("اختر كاتيجوري التكت")
-            .addChannelTypes(ChannelType.GuildCategory)
-            .setRequired(true)
-        )
-    ),
+  return data.memories[channelId];
+}
 
-  new SlashCommandBuilder()
-    .setName("panel")
-    .setDescription("إرسال لوحة فتح التكت — Ticket Panel"),
+function addMemory(
+  channelId,
+  role,
+  content
+) {
+  const memory =
+    getMemory(channelId);
 
-  new SlashCommandBuilder()
-    .setName("close")
-    .setDescription("إغلاق التكت — Close Ticket"),
+  memory.push({
+    role,
+    content
+  });
 
-  new SlashCommandBuilder()
-    .setName("rename")
-    .setDescription("تغيير اسم التكت — Rename Ticket")
-    .addStringOption(option =>
-      option
-        .setName("name")
-        .setDescription("الاسم الجديد للتكت")
-        .setRequired(true)
-    ),
+  while (
+    memory.length > MAX_MEMORY
+  ) {
+    memory.shift();
+  }
 
-  new SlashCommandBuilder()
-    .setName("stats")
-    .setDescription("إحصائيات التكتات — Ticket Statistics")
+  saveData();
+}
 
-].map(command => command.toJSON());
+function getHistory(channelId) {
+  return getMemory(channelId)
+    .map(
+      x =>
+        `${x.role}: ${x.content}`
+    )
+    .join("\n");
+}
 
-// ======================================
-// تسجيل الأوامر تلقائيًا
-// ======================================
+// ==============================
+// تحليل رسالة المستخدم
+// ==============================
 
-async function registerCommands() {
+async function detectIntent(text) {
   try {
-    const rest = new REST({
-      version: "10"
-    }).setToken(
-      process.env.DISCORD_TOKEN
-    );
+    const response =
+      await groq.chat.completions.create({
+        model: TEXT_MODEL,
 
-    for (const guild of client.guilds.cache.values()) {
+        messages: [
+          {
+            role: "system",
 
-      await rest.put(
-        Routes.applicationGuildCommands(
-          client.user.id,
-          guild.id
-        ),
-        {
-          body: commands
-        }
-      );
+            content: `
+حلل رسالة عضو Discord.
 
-      console.log(
-        `✅ Commands registered: ${guild.name}`
-      );
+اختر نوعًا واحدًا فقط:
+
+NORMAL
+ROLE_PROBLEM
+ABUSE
+RESOLVED
+
+المعاني:
+
+ROLE_PROBLEM:
+المستخدم يقول إن شخصًا سحب رتبته،
+أزال رتبته، أخذ صلاحياته، أو ظلمَه في الرتب.
+
+ABUSE:
+المستخدم يقول إن شخصًا سبه،
+شتمه، أهانه، أو أساء له.
+
+RESOLVED:
+المستخدم يقول إن المشكلة انحلت،
+أو يشكر الدعم بعد حل المشكلة.
+
+NORMAL:
+أي شيء آخر.
+
+أرسل الكلمة فقط.
+`
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+
+        temperature: 0.1,
+        max_completion_tokens: 20
+      });
+
+    const result =
+      response.choices?.[0]
+        ?.message?.content
+        ?.trim()
+        ?.toUpperCase();
+
+    if (
+      result === "ROLE_PROBLEM" ||
+      result === "ABUSE" ||
+      result === "RESOLVED"
+    ) {
+      return result;
     }
+
+    return "NORMAL";
 
   } catch (error) {
     console.error(
-      "❌ Command registration error:",
-      error
+      "Intent Error:",
+      error.message
+    );
+
+    return "NORMAL";
+  }
+}
+
+// ==============================
+// فحص الصورة
+// ==============================
+
+async function checkImage(
+  imageUrl
+) {
+  try {
+    const response =
+      await groq.chat.completions.create({
+        model: VISION_MODEL,
+
+        messages: [
+          {
+            role: "user",
+
+            content: [
+              {
+                type: "text",
+
+                text: `
+هذه صورة أرسلها عضو في تذكرة دعم.
+
+نريد معرفة هل الصورة تحتوي على دليل واضح على:
+- سب أو شتم أو إهانة بين أعضاء Discord
+- إساءة واضحة
+- رسالة مخالفة واضحة
+
+لا تفترض وجود إساءة إذا لم تكن ظاهرة.
+
+أجب بهذا الشكل فقط:
+
+YES
+
+أو:
+
+NO
+`
+              },
+
+              {
+                type: "image_url",
+
+                image_url: {
+                  url: imageUrl
+                }
+              }
+            ]
+          }
+        ],
+
+        temperature: 0.1,
+        max_completion_tokens: 20
+      });
+
+    const result =
+      response.choices?.[0]
+        ?.message?.content
+        ?.trim()
+        ?.toUpperCase();
+
+    return result === "YES";
+
+  } catch (error) {
+    console.error(
+      "Vision Error:",
+      error.message
+    );
+
+    return false;
+  }
+}
+
+// ==============================
+// تحويل التكت للوكيل
+// ==============================
+
+async function transferToSupport(
+  message,
+  reason
+) {
+  const channel =
+    message.channel;
+
+  if (!SUPPORT_ROLE_ID) {
+    await message.reply(
+      "⚠️ لم يتم إعداد رتبة الوكلاء في البوت."
+    );
+
+    return;
+  }
+
+  const botMember =
+    message.guild.members.me;
+
+  if (!botMember) return;
+
+  if (
+    !botMember.permissions.has(
+      PermissionsBitField.Flags.ManageChannels
+    )
+  ) {
+    await message.reply(
+      "❌ البوت يحتاج Manage Channels حتى يحوّل التكت."
+    );
+
+    return;
+  }
+
+  try {
+
+    await channel.permissionOverwrites.edit(
+      SUPPORT_ROLE_ID,
+      {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true
+      }
+    );
+
+    await channel.setName(
+      "وكيل-" +
+      channel.name
+        .replace(/^ticket-/, "")
+        .substring(0, 70)
+    );
+
+    data.stats.transferred++;
+    saveData();
+
+    await message.reply({
+      content:
+        `👮 تم تحويل التكت إلى وكيل الدعم.\n` +
+        `📌 السبب: ${reason}\n\n` +
+        `<@&${SUPPORT_ROLE_ID}>`,
+      allowedMentions: {
+        roles: [SUPPORT_ROLE_ID]
+      }
+    });
+
+    console.log(
+      "👮 Ticket transferred."
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Transfer Error:",
+      error.message
+    );
+
+    await message.reply(
+      "❌ ما قدرت أحوّل التكت للوكيل."
     );
   }
 }
 
-// ======================================
-// تشغيل البوت
-// ======================================
+// ==============================
+// تغيير اسم التكت
+// ==============================
 
-client.once("ready", async () => {
-
-  console.log("================================");
-  console.log(
-    `🤖 TicketAI Online: ${client.user.tag}`
-  );
-  console.log(`🧠 AI: ${MODEL}`);
-  console.log("🎫 Ticket System: ON");
-  console.log("================================");
-
-  await registerCommands();
-});
-
-// ======================================
-// AI
-// ======================================
-
-async function askAI(
-  channelId,
-  username,
+async function renameTicket(
+  message,
   text
 ) {
+  const channel =
+    message.channel;
 
-  if (!data.memory[channelId]) {
-    data.memory[channelId] = [];
+  if (!isTicket(channel)) {
+    return;
   }
 
-  const history =
-    data.memory[channelId]
-      .slice(-10)
-      .map(
-        item =>
-          `${item.role}: ${item.content}`
-      )
-      .join("\n");
+  const botMember =
+    message.guild.members.me;
 
-  const response =
-    await groq.chat.completions.create({
+  if (!botMember) return;
 
-      model: MODEL,
+  if (
+    !botMember.permissions.has(
+      PermissionsBitField.Flags.ManageChannels
+    )
+  ) {
+    return;
+  }
 
-      messages: [
+  try {
 
-        {
-          role: "system",
+    const response =
+      await groq.chat.completions.create({
+        model: TEXT_MODEL,
 
-          content: `
-أنت TicketAI، مساعد دعم فني ذكي داخل Discord.
+        messages: [
+          {
+            role: "system",
 
-افهم Discord والتكتات والسيرفرات
-والقنوات والرتب والصلاحيات والبوتات.
+            content: `
+حوّل مشكلة المستخدم إلى اسم قناة Discord.
 
-تحدث بالعربية الطبيعية.
-افهم اللهجة الأردنية والعامية.
-
-ساعد المستخدم مباشرة.
-
-إذا كانت المشكلة تحتاج Screenshot
-اطلب منه إرسال صورة.
-
-إذا لم تفهم المشكلة
-اسأل سؤالًا واضحًا.
-
-إذا المستخدم سب:
-لا تسبه ولا تغضب.
-ابقَ محترمًا وحاول مساعدته.
-
-لا تخترع معلومات.
-لا تقل إنك نفذت شيئًا لم تنفذه.
-لا تكتب Draft.
-لا تعرض التفكير الداخلي.
-
-المحادثة السابقة:
-${history || "لا يوجد سياق سابق."}
-
-اسم المستخدم:
-${username}
-
-رسالة المستخدم:
-${text}
-
-اكتب الرد النهائي فقط.
+القواعد:
+- 2 إلى 4 كلمات.
+- عربي.
+- استخدم - بين الكلمات.
+- لا تستخدم @ أو #.
+- لا تستخدم ticket.
+- لا تكتب شرح.
+- أرسل الاسم فقط.
 `
-        },
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
 
-        {
-          role: "user",
-          content: text
-        }
+        temperature: 0.2,
+        max_completion_tokens: 30
+      });
 
-      ],
+    let name =
+      response.choices?.[0]
+        ?.message?.content
+        ?.trim();
 
-      max_completion_tokens: 500,
-      temperature: 0.7
-    });
+    if (!name) return;
 
-  return (
-    response.choices?.[0]
-      ?.message?.content
-      ?.trim() || ""
-  );
+    name = name
+      .replace(/```/g, "")
+      .replace(/`/g, "")
+      .replace(/@/g, "")
+      .replace(/#/g, "")
+      .replace(/\s+/g, "-")
+      .replace(
+        /[^a-zA-Z0-9\u0600-\u06FF-]/g,
+        ""
+      )
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .substring(0, 90);
+
+    if (!name) return;
+
+    await channel.setName(name);
+
+    console.log(
+      "🏷️ Ticket renamed: " + name
+    );
+
+  } catch (error) {
+    console.log(
+      "Rename Error:",
+      error.message
+    );
+  }
 }
 
-// ======================================
-// إنشاء التكت
-// ======================================
+// ==============================
+// تقييم
+// ==============================
 
-async function createTicket(interaction) {
-
-  const guild = interaction.guild;
-
-  const categoryId =
-    data.categories[guild.id];
-
-  if (!categoryId) {
-
-    await interaction.reply({
-      content:
-        "❌ لم يتم تحديد كاتيجوري التكت.\nاستخدم `/setup category` أولًا.",
-      ephemeral: true
-    });
-
-    return;
-  }
-
-  const category =
-    guild.channels.cache.get(
-      categoryId
-    );
-
-  if (!category) {
-
-    await interaction.reply({
-      content:
-        "❌ الكاتيجوري المحفوظة لم تعد موجودة.",
-      ephemeral: true
-    });
-
-    return;
-  }
-
-  const existing =
-    guild.channels.cache.find(
-      channel =>
-        channel.name ===
-        `ticket-${interaction.user.id}`
-    );
-
-  if (existing) {
-
-    await interaction.reply({
-      content:
-        `❌ عندك تكت مفتوح بالفعل: ${existing}`,
-      ephemeral: true
-    });
-
-    return;
-  }
-
-  const channel =
-    await guild.channels.create({
-
-      name:
-        `ticket-${interaction.user.id}`,
-
-      type:
-        ChannelType.GuildText,
-
-      parent:
-        category.id,
-
-      permissionOverwrites: [
-
-        {
-          id:
-            guild.roles.everyone.id,
-
-          deny: [
-            PermissionFlagsBits.ViewChannel
-          ]
-        },
-
-        {
-          id:
-            interaction.user.id,
-
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory
-          ]
-        },
-
-        {
-          id:
-            client.user.id,
-
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageChannels
-          ]
-        }
-
-      ]
-    });
-
-  data.stats.opened++;
-
-  data.memory[channel.id] = [];
-
-  saveData();
-
+async function sendRating(
+  channel,
+  userId
+) {
   const embed =
     new EmbedBuilder()
-      .setTitle("🎫 TicketAI Support")
+      .setTitle("⭐ تقييم الدعم")
       .setDescription(
-        `أهلًا <@${interaction.user.id}> 👋\n\n` +
-        "اكتب مشكلتك هنا، وسيحاول TicketAI مساعدتك."
+        "تم حل مشكلتك؟\n\n" +
+        "قيّم تجربة الدعم من 1 إلى 5:"
       );
 
   const row =
-    new ActionRowBuilder()
-      .addComponents(
+    new ActionRowBuilder();
 
-        new ButtonBuilder()
-          .setCustomId("close_ticket")
-          .setLabel("إغلاق التكت")
-          .setEmoji("🔒")
-          .setStyle(ButtonStyle.Danger)
-
-      );
+  for (
+    let i = 1;
+    i <= 5;
+    i++
+  ) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(
+          `rating_${userId}_${i}`
+        )
+        .setLabel(`${i} ⭐`)
+        .setStyle(
+          ButtonStyle.Primary
+        )
+    );
+  }
 
   await channel.send({
-    content:
-      `<@${interaction.user.id}>`,
     embeds: [embed],
     components: [row]
   });
-
-  await interaction.reply({
-    content:
-      `✅ تم إنشاء التكت: ${channel}`,
-    ephemeral: true
-  });
 }
 
-// ======================================
+// ==============================
 // إغلاق التكت
-// ======================================
+// ==============================
 
-async function closeTicket(channel) {
+async function closeTicket(
+  channel
+) {
+  try {
 
-  if (!isTicket(channel)) return;
+    const everyone =
+      channel.guild.roles.everyone;
 
-  const row =
-    new ActionRowBuilder()
-      .addComponents(
+    await channel.permissionOverwrites.edit(
+      everyone,
+      {
+        SendMessages: false
+      }
+    );
 
-        new ButtonBuilder()
-          .setCustomId("rate_1")
-          .setLabel("1 ⭐")
-          .setStyle(ButtonStyle.Secondary),
+    await channel.setName(
+      "closed-" +
+      channel.name
+        .replace(/^closed-/, "")
+        .substring(0, 80)
+    );
 
-        new ButtonBuilder()
-          .setCustomId("rate_2")
-          .setLabel("2 ⭐")
-          .setStyle(ButtonStyle.Secondary),
+    data.stats.closed++;
+    saveData();
 
-        new ButtonBuilder()
-          .setCustomId("rate_3")
-          .setLabel("3 ⭐")
-          .setStyle(ButtonStyle.Secondary),
+    console.log(
+      "🔒 Ticket closed."
+    );
 
-        new ButtonBuilder()
-          .setCustomId("rate_4")
-          .setLabel("4 ⭐")
-          .setStyle(ButtonStyle.Secondary),
+  } catch (error) {
 
-        new ButtonBuilder()
-          .setCustomId("rate_5")
-          .setLabel("5 ⭐")
-          .setStyle(ButtonStyle.Primary)
-
-      );
-
-  await channel.send({
-
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("⭐ تقييم الدعم")
-        .setDescription(
-          "كيف كانت تجربتك؟ اختر تقييمًا من 1 إلى 5."
-        )
-    ],
-
-    components: [row]
-
-  });
-
-  data.stats.closed++;
-
-  saveData();
-
-  setTimeout(async () => {
-
-    try {
-      await channel.delete(
-        "Ticket closed"
-      );
-    } catch {}
-
-  }, 10000);
+    console.error(
+      "Close Error:",
+      error.message
+    );
+  }
 }
 
-// ======================================
-// Slash Commands + Buttons
-// ======================================
+// ==============================
+// أزرار التقييم
+// ==============================
 
 client.on(
   "interactionCreate",
   async interaction => {
 
-    try {
-
-      // ================================
-      // Slash Commands
-      // ================================
-
-      if (
-        interaction.isChatInputCommand()
-      ) {
-
-        // /setup category
-        if (
-          interaction.commandName ===
-          "setup"
-        ) {
-
-          if (
-            !interaction.memberPermissions.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ تحتاج صلاحية Manage Server.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          const category =
-            interaction.options.getChannel(
-              "category"
-            );
-
-          data.categories[
-            interaction.guild.id
-          ] = category.id;
-
-          saveData();
-
-          await interaction.reply({
-            content:
-              `✅ تم تحديد كاتيجوري التكتات: ${category}`,
-            ephemeral: true
-          });
-
-          return;
-        }
-
-        // /panel
-        if (
-          interaction.commandName ===
-          "panel"
-        ) {
-
-          if (
-            !interaction.memberPermissions.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ تحتاج صلاحية Manage Server.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          const embed =
-            new EmbedBuilder()
-              .setTitle("🎫 الدعم الفني")
-              .setDescription(
-                "اضغط على الزر لفتح تكت جديد مع TicketAI."
-              );
-
-          const row =
-            new ActionRowBuilder()
-              .addComponents(
-
-                new ButtonBuilder()
-                  .setCustomId(
-                    "open_ticket"
-                  )
-                  .setLabel("فتح تكت")
-                  .setEmoji("🎫")
-                  .setStyle(
-                    ButtonStyle.Primary
-                  )
-
-              );
-
-          await interaction.reply({
-            embeds: [embed],
-            components: [row]
-          });
-
-          return;
-        }
-
-        // /close
-        if (
-          interaction.commandName ===
-          "close"
-        ) {
-
-          if (
-            !isTicket(
-              interaction.channel
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ استخدم الأمر داخل التكت.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          await interaction.reply({
-            content:
-              "🔒 سيتم إغلاق التكت خلال 10 ثواني."
-          });
-
-          await closeTicket(
-            interaction.channel
-          );
-
-          return;
-        }
-
-        // /rename
-        if (
-          interaction.commandName ===
-          "rename"
-        ) {
-
-          if (
-            !isTicket(
-              interaction.channel
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ استخدم الأمر داخل التكت.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          if (
-            !interaction.memberPermissions.has(
-              PermissionFlagsBits.ManageChannels
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ تحتاج Manage Channels.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          let name =
-            interaction.options.getString(
-              "name"
-            );
-
-          name =
-            name
-              .toLowerCase()
-              .replace(/\s+/g, "-")
-              .replace(
-                /[^a-zA-Z0-9\u0600-\u06FF-]/g,
-                ""
-              )
-              .substring(0, 90);
-
-          if (!name) {
-
-            await interaction.reply({
-              content:
-                "❌ الاسم غير صالح.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          await interaction.channel.setName(
-            name
-          );
-
-          await interaction.reply({
-            content:
-              `✅ تم تغيير اسم التكت إلى **${name}**`
-          });
-
-          return;
-        }
-
-        // /stats
-        if (
-          interaction.commandName ===
-          "stats"
-        ) {
-
-          if (
-            !interaction.memberPermissions.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-
-            await interaction.reply({
-              content:
-                "❌ تحتاج Manage Server.",
-              ephemeral: true
-            });
-
-            return;
-          }
-
-          const ratings =
-            data.stats.ratings || [];
-
-          const average =
-            ratings.length
-              ? (
-                  ratings.reduce(
-                    (a, b) => a + b,
-                    0
-                  ) / ratings.length
-                ).toFixed(2)
-              : "لا يوجد";
-
-          await interaction.reply({
-
-            embeds: [
-
-              new EmbedBuilder()
-                .setTitle(
-                  "📊 TicketAI Statistics"
-                )
-                .addFields(
-
-                  {
-                    name:
-                      "🎫 التكتات المفتوحة",
-                    value:
-                      String(
-                        data.stats.opened
-                      ),
-                    inline: true
-                  },
-
-                  {
-                    name:
-                      "🔒 التكتات المغلقة",
-                    value:
-                      String(
-                        data.stats.closed
-                      ),
-                    inline: true
-                  },
-
-                  {
-                    name:
-                      "⭐ متوسط التقييم",
-                    value:
-                      `${average}/5`,
-                    inline: true
-                  }
-
-                )
-
-            ]
-
-          });
-
-          return;
-        }
-      }
-
-      // ================================
-      // فتح تكت
-      // ================================
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "open_ticket"
-      ) {
-
-        await createTicket(
-          interaction
-        );
-
-        return;
-      }
-
-      // ================================
-      // إغلاق
-      // ================================
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "close_ticket"
-      ) {
-
-        await interaction.reply({
-          content:
-            "🔒 جاري إغلاق التكت..."
-        });
-
+    if (!interaction.isButton()) {
+      return;
+    }
+
+    if (
+      !interaction.customId.startsWith(
+        "rating_"
+      )
+    ) {
+      return;
+    }
+
+    const parts =
+      interaction.customId.split("_");
+
+    const userId = parts[1];
+    const rating =
+      Number(parts[2]);
+
+    if (
+      interaction.user.id !== userId
+    ) {
+      await interaction.reply({
+        content:
+          "❌ هذا التقييم ليس لك.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    if (
+      rating < 1 ||
+      rating > 5
+    ) {
+      return;
+    }
+
+    const ratingKey =
+      `${interaction.channel.id}_${userId}`;
+
+    if (
+      data.ratings[ratingKey]
+    ) {
+      await interaction.reply({
+        content:
+          "❌ لقد قيّمت هذا التكت مسبقًا.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    data.ratings[ratingKey] =
+      rating;
+
+    data.stats.ratings++;
+    data.stats.ratingSum +=
+      rating;
+
+    saveData();
+
+    await interaction.reply({
+      content:
+        `⭐ شكرًا! تقييمك **${rating}/5** تم تسجيله.`,
+      ephemeral: true
+    });
+
+    await interaction.channel.send(
+      "🔒 شكرًا لتقييمك، سيتم إغلاق التكت الآن."
+    );
+
+    // نعطي Discord لحظة لإرسال الرسالة
+    setTimeout(
+      async () => {
         await closeTicket(
           interaction.channel
         );
-
-        return;
-      }
-
-      // ================================
-      // تقييم
-      // ================================
-
-      if (
-        interaction.isButton() &&
-        interaction.customId.startsWith(
-          "rate_"
-        )
-      ) {
-
-        const rating =
-          Number(
-            interaction.customId
-              .split("_")[1]
-          );
-
-        data.stats.ratings.push(
-          rating
-        );
-
-        saveData();
-
-        await interaction.reply({
-          content:
-            `⭐ شكرًا! تقييمك **${rating}/5**`,
-          ephemeral: true
-        });
-
-        return;
-      }
-
-    } catch (error) {
-
-      console.error(
-        "❌ Interaction Error:",
-        error
-      );
-
-      if (
-        !interaction.replied &&
-        !interaction.deferred
-      ) {
-
-        await interaction.reply({
-          content:
-            "❌ حدث خطأ.",
-          ephemeral: true
-        }).catch(() => {});
-      }
-    }
+      },
+      2000
+    );
   }
 );
 
-// ======================================
-// AI داخل التكت
-// ======================================
+// ==============================
+// الرسائل
+// ==============================
 
 client.on(
   "messageCreate",
   async message => {
 
-    if (message.author.bot) return;
-    if (!message.guild) return;
-    if (!isTicket(message.channel)) return;
+    if (message.author.bot) {
+      return;
+    }
+
+    if (!message.guild) {
+      return;
+    }
+
+    if (!isTicket(message.channel)) {
+      return;
+    }
 
     const text =
       message.content.trim();
 
-    if (!text) return;
+    // ==========================
+    // إذا أرسل صورة
+    // ==========================
+
+    if (
+      message.attachments.size > 0
+    ) {
+
+      const image =
+        message.attachments.find(
+          file =>
+            file.contentType &&
+            file.contentType.startsWith(
+              "image/"
+            )
+        );
+
+      if (image) {
+
+        await message.channel
+          .sendTyping()
+          .catch(() => {});
+
+        await message.reply(
+          "🔎 لحظة، أراجع الصورة..."
+        );
+
+        const isEvidence =
+          await checkImage(
+            image.url
+          );
+
+        if (isEvidence) {
+
+          await transferToSupport(
+            message,
+            "تم العثور على دليل واضح في الصورة."
+          );
+
+        } else {
+
+          await message.reply(
+            "⚠️ لم أستطع تأكيد المخالفة من الصورة. إذا كانت هناك صورة أوضح، أرسلها."
+          );
+        }
+
+        return;
+      }
+    }
+
+    if (!text) {
+      return;
+    }
+
+    console.log(
+      `📩 ${message.author.username}: ${text}`
+    );
 
     try {
 
@@ -904,35 +761,149 @@ client.on(
         .sendTyping()
         .catch(() => {});
 
+      // حفظ الرسالة
+      addMemory(
+        message.channel.id,
+        "العضو",
+        text
+      );
+
+      // ==========================
+      // فهم نية المستخدم
+      // ==========================
+
+      const intent =
+        await detectIntent(text);
+
+      console.log(
+        "🧠 Intent:",
+        intent
+      );
+
+      // ==========================
+      // مشكلة رتبة
+      // ==========================
+
       if (
-        !data.memory[
-          message.channel.id
-        ]
+        intent === "ROLE_PROBLEM"
       ) {
-        data.memory[
-          message.channel.id
-        ] = [];
-      }
 
-      const memory =
-        data.memory[
-          message.channel.id
-        ];
-
-      memory.push({
-        role: "المستخدم",
-        content: text
-      });
-
-      const answer =
-        await askAI(
-          message.channel.id,
-          message.author.username,
-          text
+        await message.reply(
+          "تمام، فهمت مشكلتك. 👮 راح أحوّل التكت لوكيل الدعم حتى يساعدك."
         );
 
-      if (!answer) {
+        await transferToSupport(
+          message,
+          "مشكلة في الرتب أو الصلاحيات."
+        );
 
+        return;
+      }
+
+      // ==========================
+      // سب / إساءة
+      // ==========================
+
+      if (
+        intent === "ABUSE"
+      ) {
+
+        await message.reply(
+          "📸 إذا كان شخص سبّك أو أساء لك، أرسل Screenshot واضحة للمحادثة حتى أراجعها."
+        );
+
+        return;
+      }
+
+      // ==========================
+      // المشكلة انحلت
+      // ==========================
+
+      if (
+        intent === "RESOLVED"
+      ) {
+
+        await message.reply(
+          "❤️ ممتاز! سعيد إن مشكلتك انحلت. قبل إغلاق التكت، قيّم تجربة الدعم."
+        );
+
+        await sendRating(
+          message.channel,
+          message.author.id
+        );
+
+        return;
+      }
+
+      // ==========================
+      // تغيير الاسم
+      // ==========================
+
+      await renameTicket(
+        message,
+        text
+      );
+
+      // ==========================
+      // AI
+      // ==========================
+
+      const history =
+        getHistory(
+          message.channel.id
+        );
+
+      const response =
+        await groq.chat.completions.create({
+          model: TEXT_MODEL,
+
+          messages: [
+            {
+              role: "system",
+
+              content: `
+أنت TicketAI، مساعد دعم فني داخل Discord.
+
+افهم Discord والتذاكر والرتب والقنوات
+والصلاحيات والبوتات والمشاكل التقنية.
+
+تحدث بالعربية الطبيعية وباللهجة العامية
+إذا كان المستخدم يستخدمها.
+
+ساعد المستخدم بشكل مباشر.
+
+إذا احتاج صورة:
+اطلب منه Screenshot.
+
+إذا لم تفهم المشكلة:
+اسأل سؤالًا واضحًا.
+
+لا تسب.
+لا تكرر الرد.
+لا تقل إنك مجرد بوت.
+لا تكتب Draft.
+لا تخترع معلومات.
+
+سياق التكت السابق:
+${history}
+`
+            },
+            {
+              role: "user",
+              content: text
+            }
+          ],
+
+          temperature: 0.7,
+          max_completion_tokens: 500
+        });
+
+      const answer =
+        response.choices?.[0]
+          ?.message?.content
+          ?.trim();
+
+      if (!answer) {
         await message.reply(
           "❌ ما قدرت أجهز رد حاليًا."
         );
@@ -949,27 +920,25 @@ client.on(
         }
       });
 
-      memory.push({
-        role: "TicketAI",
-        content:
-          answer.substring(0, 1900)
-      });
-
-      // الاحتفاظ بآخر 12 رسالة
-      if (memory.length > 12) {
-        memory.splice(
-          0,
-          memory.length - 12
-        );
-      }
-
-      saveData();
+      addMemory(
+        message.channel.id,
+        "TicketAI",
+        answer
+      );
 
     } catch (error) {
 
       console.error(
+        "================================"
+      );
+
+      console.error(
         "❌ AI ERROR:",
         error
+      );
+
+      console.error(
+        "================================"
       );
 
       await message.reply(
@@ -979,12 +948,79 @@ client.on(
   }
 );
 
-// ======================================
-// التحقق
-// ======================================
+// ==============================
+// إحصائيات
+// ==============================
+
+client.on(
+  "messageCreate",
+  async message => {
+
+    if (message.author.bot) {
+      return;
+    }
+
+    if (
+      message.content ===
+      "!ticketstats"
+    ) {
+
+      if (
+        !message.member.permissions.has(
+          PermissionsBitField.Flags.ManageGuild
+        )
+      ) {
+        return;
+      }
+
+      const average =
+        data.stats.ratings > 0
+          ? (
+              data.stats.ratingSum /
+              data.stats.ratings
+            ).toFixed(2)
+          : "لا يوجد";
+
+      await message.reply(
+        `📊 **TicketAI Stats**\n\n` +
+        `🎫 التكتات المغلقة: ${data.stats.closed}\n` +
+        `👮 المحولة للوكلاء: ${data.stats.transferred}\n` +
+        `⭐ التقييمات: ${data.stats.ratings}\n` +
+        `📈 المتوسط: ${average}/5`
+      );
+    }
+  }
+);
+
+// ==============================
+// أخطاء
+// ==============================
+
+process.on(
+  "unhandledRejection",
+  error => {
+    console.error(
+      "Unhandled Rejection:",
+      error
+    );
+  }
+);
+
+process.on(
+  "uncaughtException",
+  error => {
+    console.error(
+      "Uncaught Exception:",
+      error
+    );
+  }
+);
+
+// ==============================
+// Variables
+// ==============================
 
 if (!process.env.DISCORD_TOKEN) {
-
   console.error(
     "❌ DISCORD_TOKEN غير موجود."
   );
@@ -993,7 +1029,6 @@ if (!process.env.DISCORD_TOKEN) {
 }
 
 if (!process.env.GROQ_API_KEY) {
-
   console.error(
     "❌ GROQ_API_KEY غير موجود."
   );
@@ -1001,9 +1036,17 @@ if (!process.env.GROQ_API_KEY) {
   process.exit(1);
 }
 
-// ======================================
+if (!process.env.SUPPORT_ROLE_ID) {
+  console.error(
+    "❌ SUPPORT_ROLE_ID غير موجود."
+  );
+
+  process.exit(1);
+}
+
+// ==============================
 // Login
-// ======================================
+// ==============================
 
 client.login(
   process.env.DISCORD_TOKEN
