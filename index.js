@@ -1,408 +1,814 @@
+require("dotenv").config();
+
 const {
   Client,
   GatewayIntentBits,
-  Partials,
+  ChannelType,
+  PermissionFlagsBits,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  PermissionFlagsBits,
-  ChannelType,
+  SlashCommandBuilder,
+  MessageFlags
 } = require("discord.js");
 
-const Groq = require("groq-sdk");
-require("dotenv").config();
-
-// =====================================
-// ENV
-// =====================================
-
-if (!process.env.DISCORD_TOKEN) {
-  console.error("❌ DISCORD_TOKEN غير موجود في Railway Variables");
-  process.exit(1);
-}
-
-if (!process.env.GROQ_API_KEY) {
-  console.error("❌ GROQ_API_KEY غير موجود في Railway Variables");
-  process.exit(1);
-}
-
-// =====================================
-// DISCORD
-// =====================================
+// ================================
+// DISCORD CLIENT
+// ================================
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-  partials: [Partials.Channel],
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-// =====================================
-// GROQ
-// =====================================
+// ================================
+// VARIABLES
+// ================================
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+const TOKEN = process.env.DISCORD_TOKEN;
+const GROQ_KEY = process.env.GROQ_API_KEY;
+const GUILD_ID = process.env.GUILD_ID;
 
-// موديل Groq
-const AI_MODEL = "openai/gpt-oss-20b";
+// اختياري:
+// إذا حطيتهم في Railway يبقوا محفوظين بعد Restart
+let aiChat = process.env.AI_CHAT_ID || null;
+let aiCategory = process.env.AI_CATEGORY_ID || null;
 
-// =====================================
-// AI SETTINGS
-// =====================================
+// ================================
+// CHECK VARIABLES
+// ================================
 
-const SYSTEM_PROMPT = `
-أنت TicketAI، بوت دعم فني ذكي داخل Discord.
-
-أنت تتحدث بالعربية بشكل أساسي.
-
-قواعد الرد:
-- كن محترماً وودوداً.
-- افهم مشكلة المستخدم قبل الرد.
-- أعطِ حلاً واضحاً ومباشراً.
-- إذا لم تعرف الحل، قل إنك غير متأكد ولا تخترع معلومات.
-- لا تقل إنك OpenAI أو Gemini.
-- أنت تعمل بواسطة Groq.
-- لا تذكر معلومات تقنية عن API إلا إذا سأل المستخدم.
-- لا تطيل الرد بدون سبب.
-- استخدم الإيموجي عند الحاجة فقط.
-`;
-
-// =====================================
-// ASK GROQ
-// =====================================
-
-async function askAI(userMessage) {
-  const completion = await groq.chat.completions.create({
-    model: AI_MODEL,
-
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: userMessage,
-      },
-    ],
-
-    temperature: 0.7,
-    max_completion_tokens: 700,
-  });
-
-  return (
-    completion.choices?.[0]?.message?.content?.trim() ||
-    "❌ ما قدرت أطلع رد حالياً."
-  );
+if (!TOKEN) {
+  console.log("❌ DISCORD_TOKEN ناقص");
+  process.exit(1);
 }
 
-// =====================================
-// BOT READY
-// =====================================
+if (!GROQ_KEY) {
+  console.log("❌ GROQ_API_KEY ناقص");
+  process.exit(1);
+}
 
-client.once("ready", async () => {
-  console.log("======================================");
+if (!GUILD_ID) {
+  console.log("❌ GUILD_ID ناقص");
+  process.exit(1);
+}
+
+// ================================
+// COMMANDS
+// ================================
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName("ai-chat")
+    .setDescription("تحديد شات الذكاء الاصطناعي")
+    .addChannelOption(option =>
+      option
+        .setName("channel")
+        .setDescription("اختر الشات")
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildText)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("ai-category")
+    .setDescription("تحديد كاتيجوري تكتات AI")
+    .addChannelOption(option =>
+      option
+        .setName("category")
+        .setDescription("اختر الكاتيجوري")
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildCategory)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("ai-ticket")
+    .setDescription("إرسال بانل AI Ticket"),
+
+  new SlashCommandBuilder()
+    .setName("ai-stats")
+    .setDescription("حالة نظام AI")
+].map(command => command.toJSON());
+
+// ================================
+// READY
+// ================================
+
+client.once("clientReady", async () => {
+  console.log("================================");
   console.log("🤖 TicketAI Online");
-  console.log(`👤 ${client.user.tag}`);
-  console.log(`🌐 Servers: ${client.guilds.cache.size}`);
+  console.log("👤 " + client.user.tag);
   console.log("🧠 AI: Groq");
-  console.log(`⚙️ Model: ${AI_MODEL}`);
-  console.log("======================================");
+  console.log("================================");
 
-  client.user.setPresence({
-    activities: [
-      {
-        name: "دعم التكتات 🤖",
-        type: 3,
-      },
-    ],
-    status: "online",
-  });
-});
+  const guild = client.guilds.cache.get(GUILD_ID);
 
-// =====================================
-// PANEL COMMAND
-// =====================================
-
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.commandName === "panel") {
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🤖 TicketAI Support")
-          .setDescription(
-            "مرحباً بك في الدعم الفني!\n\n" +
-            "اضغط على الزر بالأسفل لفتح تكت والتحدث مع الذكاء الاصطناعي."
-          )
-          .setColor(0x5865f2),
-      ],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("open_ticket")
-            .setLabel("🎫 فتح تكت")
-            .setStyle(ButtonStyle.Primary)
-        ),
-      ],
-    });
+  if (!guild) {
+    console.log("❌ البوت مش موجود في السيرفر");
+    console.log("GUILD_ID:", GUILD_ID);
+    return;
   }
+
+  try {
+    await guild.commands.set(commands);
+
+    console.log("✅ تم تسجيل جميع الأوامر");
+    console.log("🏠 السيرفر:", guild.name);
+
+  } catch (error) {
+    console.log("❌ فشل تسجيل الأوامر");
+    console.error(error);
+  }
+
+  // ==================================
+  // محاولة استرجاع AI Category
+  // ==================================
+
+  if (!aiCategory) {
+    const existingAITicket = guild.channels.cache.find(channel =>
+      channel.type === ChannelType.GuildText &&
+      channel.name.startsWith("ai-") &&
+      channel.parentId
+    );
+
+    if (existingAITicket) {
+      aiCategory = existingAITicket.parentId;
+
+      console.log(
+        "♻️ تم استرجاع AI Category:",
+        aiCategory
+      );
+    }
+  }
+
+  // ==================================
+  // محاولة استرجاع AI Chat
+  // ==================================
+
+  if (!aiChat) {
+    const possibleChat = guild.channels.cache.find(channel =>
+      channel.type === ChannelType.GuildText &&
+      (
+        channel.name === "ai-chat" ||
+        channel.name === "ai-chatting" ||
+        channel.name.includes("ai-chat")
+      )
+    );
+
+    if (possibleChat) {
+      aiChat = possibleChat.id;
+
+      console.log(
+        "♻️ تم استرجاع AI Chat:",
+        aiChat
+      );
+    }
+  }
+
+  client.user.setActivity("AI Support 🤖");
 });
 
-// =====================================
-// BUTTONS
-// =====================================
+// ================================
+// GROQ AI
+// ================================
 
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) return;
+async function askAI(text) {
+  try {
+    const controller = new AbortController();
 
-  // ===================================
-  // OPEN TICKET
-  // ===================================
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 30000);
 
-  if (interaction.customId === "open_ticket") {
-    // مهم جداً حتى لا يظهر:
-    // This interaction failed
-    await interaction.deferReply({
-      ephemeral: true,
-    });
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
 
-    try {
-      const guild = interaction.guild;
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${GROQ_KEY}`
+        },
 
-      if (!guild) {
-        return interaction.editReply("❌ هذا الأمر يجب أن يكون داخل سيرفر.");
+        body: JSON.stringify({
+          model: "llama-3.1-8b-instant",
+
+          messages: [
+            {
+              role: "system",
+              content:
+                "أنت بوت دعم فني عربي في Discord. " +
+                "رد بالعربية وبشكل مختصر وواضح. " +
+                "ساعد المستخدم في مشاكل Discord والبوتات والسيرفرات والتكتات. " +
+                "إذا قال إن شخصاً سبه اطلب منه إرسال صورة أو دليل. " +
+                "إذا احتاج موظفاً أخبره أنه يحتاج تدخل الدعم."
+            },
+
+            {
+              role: "user",
+              content: text
+            }
+          ],
+
+          temperature: 0.5,
+          max_tokens: 500
+        }),
+
+        signal: controller.signal
+      }
+    );
+
+    clearTimeout(timeout);
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.log("❌ Groq Error:", data);
+
+      return "❌ الذكاء الاصطناعي غير متاح حالياً.";
+    }
+
+    return (
+      data.choices?.[0]?.message?.content ||
+      "❌ لم أستطع إنشاء رد."
+    );
+
+  } catch (error) {
+
+    console.log("❌ AI ERROR:", error);
+
+    if (error.name === "AbortError") {
+      return "❌ Groq أخذ وقتاً طويلاً للرد، حاول مرة ثانية.";
+    }
+
+    return "❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.";
+  }
+}
+
+// ================================
+// INTERACTIONS
+// ================================
+
+client.on("interactionCreate", async interaction => {
+
+  // ==================================
+  // SLASH COMMANDS
+  // ==================================
+
+  if (interaction.isChatInputCommand()) {
+
+    // ------------------------------
+    // AI CHAT
+    // ------------------------------
+
+    if (interaction.commandName === "ai-chat") {
+
+      if (
+        !interaction.memberPermissions?.has(
+          PermissionFlagsBits.Administrator
+        )
+      ) {
+        return interaction.reply({
+          content: "❌ تحتاج Administrator.",
+          flags: MessageFlags.Ephemeral
+        });
       }
 
-      // البحث عن تكت مفتوح للمستخدم
-      const existingTicket = guild.channels.cache.find(
-        (channel) =>
-          channel.type === ChannelType.GuildText &&
-          channel.name === `ticket-${interaction.user.id}`
-      );
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral
+      });
 
-      if (existingTicket) {
-        return interaction.editReply(
-          `❌ عندك تكت مفتوح بالفعل:\n${existingTicket}`
+      try {
+
+        const channel =
+          interaction.options.getChannel("channel");
+
+        aiChat = channel.id;
+
+        await interaction.editReply(
+          `✅ تم تشغيل AI في ${channel}`
+        );
+
+      } catch (error) {
+
+        console.log("❌ ai-chat error:", error);
+
+        await interaction.editReply(
+          "❌ حدث خطأ أثناء تحديد الشات."
         );
       }
 
-      // إنشاء التكت
-      const ticket = await guild.channels.create({
-        name: `ticket-${interaction.user.id}`,
-        type: ChannelType.GuildText,
+      return;
+    }
 
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone.id,
-            deny: [PermissionFlagsBits.ViewChannel],
-          },
+    // ------------------------------
+    // AI CATEGORY
+    // ------------------------------
 
-          {
-            id: interaction.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-            ],
-          },
+    if (interaction.commandName === "ai-category") {
 
-          {
-            id: client.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory,
-              PermissionFlagsBits.EmbedLinks,
-              PermissionFlagsBits.ManageChannels,
-            ],
-          },
-        ],
+      if (
+        !interaction.memberPermissions?.has(
+          PermissionFlagsBits.Administrator
+        )
+      ) {
+        return interaction.reply({
+          content: "❌ تحتاج Administrator.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral
       });
 
+      try {
+
+        const category =
+          interaction.options.getChannel("category");
+
+        aiCategory = category.id;
+
+        await interaction.editReply(
+          `✅ تم تحديد ${category} لتكتات AI`
+        );
+
+      } catch (error) {
+
+        console.log("❌ ai-category error:", error);
+
+        await interaction.editReply(
+          "❌ حدث خطأ أثناء تحديد الكاتيجوري."
+        );
+      }
+
+      return;
+    }
+
+    // ------------------------------
+    // AI TICKET PANEL
+    // ------------------------------
+
+    if (interaction.commandName === "ai-ticket") {
+
+      if (
+        !interaction.memberPermissions?.has(
+          PermissionFlagsBits.Administrator
+        )
+      ) {
+        return interaction.reply({
+          content: "❌ تحتاج Administrator.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      if (!aiCategory) {
+
+        return interaction.reply({
+          content:
+            "❌ AI Category غير محددة.\n" +
+            "استخدم `/ai-category` أولاً.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle("🤖 مرحباً بك في AI Support")
+        .setTitle("🤖 الدعم الفني")
         .setDescription(
-          "اكتب مشكلتك هنا وسأحاول مساعدتك.\n\n" +
-          "💡 اكتب المشكلة بالتفصيل للحصول على إجابة أفضل."
+          "تحتاج مساعدة؟\n\n" +
+          "اضغط الزر لفتح تكت AI خاصة بك."
         )
         .setColor(0x5865f2);
 
-      const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("close_ticket")
-          .setLabel("🔒 إغلاق التكت")
-          .setStyle(ButtonStyle.Danger)
-      );
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId("open_ai")
+            .setLabel("فتح تذكرة")
+            .setEmoji("🎫")
+            .setStyle(ButtonStyle.Primary)
+        );
 
-      await ticket.send({
-        content: `<@${interaction.user.id}>`,
+      return interaction.reply({
         embeds: [embed],
-        components: [buttons],
+        components: [row]
+      });
+    }
+
+    // ------------------------------
+    // AI STATS
+    // ------------------------------
+
+    if (interaction.commandName === "ai-stats") {
+
+      const guild = interaction.guild;
+
+      let ticketCount = 0;
+
+      if (guild) {
+        ticketCount = guild.channels.cache.filter(
+          channel =>
+            channel.type === ChannelType.GuildText &&
+            channel.name.startsWith("ai-")
+        ).size;
+      }
+
+      return interaction.reply({
+        content:
+          `🤖 AI: Online\n` +
+          `🧠 Provider: Groq\n` +
+          `💬 AI Chat: ${
+            aiChat ? `<#${aiChat}>` : "غير محدد"
+          }\n` +
+          `📁 Category: ${
+            aiCategory ? `<#${aiCategory}>` : "غير محددة"
+          }\n` +
+          `🎫 AI Tickets: ${ticketCount}`
+      });
+    }
+  }
+
+  // ==================================
+  // BUTTONS
+  // ==================================
+
+  if (interaction.isButton()) {
+
+    // ================================
+    // OPEN AI TICKET
+    // ================================
+
+    if (interaction.customId === "open_ai") {
+
+      // أهم إصلاح:
+      // نعمل defer فوراً حتى لا يظهر
+      // "didn't respond in time"
+
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral
       });
 
-      await interaction.editReply(
-        `✅ تم إنشاء التكت بنجاح!\n${ticket}`
-      );
+      try {
 
-      console.log(`🎫 Ticket created: ${ticket.name}`);
-    } catch (error) {
-      console.error("❌ Ticket creation error:", error);
+        if (!aiCategory) {
 
-      await interaction.editReply(
-        "❌ صار خطأ أثناء إنشاء التكت."
-      );
-    }
-
-    return;
-  }
-
-  // ===================================
-  // CLOSE TICKET
-  // ===================================
-
-  if (interaction.customId === "close_ticket") {
-    // مهم جداً حتى لا يظهر:
-    // didn't respond in time
-    await interaction.deferUpdate();
-
-    try {
-      await interaction.channel.send(
-        "🔒 سيتم إغلاق التكت خلال 3 ثوانٍ..."
-      );
-
-      setTimeout(async () => {
-        try {
-          await interaction.channel.delete();
-        } catch (error) {
-          console.error("❌ Delete ticket error:", error);
+          return interaction.editReply(
+            "❌ AI Category غير محددة.\n" +
+            "استخدم `/ai-category` أولاً."
+          );
         }
-      }, 3000);
-    } catch (error) {
-      console.error("❌ Close ticket error:", error);
+
+        const guild = interaction.guild;
+
+        if (!guild) {
+          return interaction.editReply(
+            "❌ حدث خطأ: السيرفر غير موجود."
+          );
+        }
+
+        // ==============================
+        // منع فتح أكثر من تكت
+        // ==============================
+
+        const existingTicket =
+          guild.channels.cache.find(channel =>
+            channel.type === ChannelType.GuildText &&
+            channel.parentId === aiCategory &&
+            channel.name.startsWith(
+              `ai-${interaction.user.username}`
+                .toLowerCase()
+                .replace(/[^a-z0-9-]/g, "-")
+                .slice(0, 70)
+            )
+          );
+
+        if (existingTicket) {
+
+          return interaction.editReply(
+            `❌ عندك تكت مفتوح بالفعل: ${existingTicket}`
+          );
+        }
+
+        // ==============================
+        // CREATE CHANNEL
+        // ==============================
+
+        const safeName =
+          interaction.user.username
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, "-")
+            .replace(/-+/g, "-")
+            .slice(0, 70);
+
+        const channel =
+          await guild.channels.create({
+
+            name: `ai-${safeName}`,
+
+            type: ChannelType.GuildText,
+
+            parent: aiCategory,
+
+            permissionOverwrites: [
+
+              {
+                id: guild.roles.everyone.id,
+
+                deny: [
+                  PermissionFlagsBits.ViewChannel
+                ]
+              },
+
+              {
+                id: interaction.user.id,
+
+                allow: [
+                  PermissionFlagsBits.ViewChannel,
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.ReadMessageHistory,
+                  PermissionFlagsBits.AttachFiles
+                ]
+              },
+
+              {
+                id: client.user.id,
+
+                allow: [
+                  PermissionFlagsBits.ViewChannel,
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.ReadMessageHistory,
+                  PermissionFlagsBits.ManageChannels,
+                  PermissionFlagsBits.EmbedLinks
+                ]
+              }
+            ]
+          });
+
+        // ==============================
+        // TICKET MESSAGE
+        // ==============================
+
+        const closeRow =
+          new ActionRowBuilder()
+            .addComponents(
+
+              new ButtonBuilder()
+                .setCustomId("close_ai")
+                .setLabel("إغلاق التكت")
+                .setEmoji("🔒")
+                .setStyle(ButtonStyle.Danger)
+
+            );
+
+        await channel.send({
+
+          content:
+            `${interaction.user}\n` +
+            `🤖 **مرحباً بك في AI Support**\n\n` +
+            `اكتب مشكلتك هنا وسأحاول مساعدتك.`,
+
+          components: [closeRow]
+        });
+
+        await interaction.editReply(
+          `✅ تم فتح التكت ${channel}`
+        );
+
+        console.log(
+          `🎫 Ticket opened: ${channel.name}`
+        );
+
+      } catch (error) {
+
+        console.log("❌ OPEN TICKET ERROR:");
+        console.error(error);
+
+        try {
+
+          await interaction.editReply(
+            "❌ حدث خطأ أثناء إنشاء التكت.\n" +
+            "تأكد أن البوت عنده Manage Channels."
+          );
+
+        } catch {}
+      }
+
+      return;
     }
 
-    return;
-  }
-});
+    // ================================
+    // CLOSE AI TICKET
+    // ================================
 
-// =====================================
-// AI TICKET RESPONDER
-// =====================================
+    if (interaction.customId === "close_ai") {
 
-client.on("messageCreate", async (message) => {
-  try {
-    // لا يرد على البوتات
-    if (message.author.bot) return;
+      // التكتات القديمة تظل تعمل بعد Restart
+      // لأننا نعتمد على اسم القناة وليس Set فقط
 
-    // لازم يكون داخل سيرفر
-    if (!message.guild) return;
+      const channel = interaction.channel;
 
-    // لازم يكون داخل تكت
-    const isTicket =
-      message.channel.name.startsWith("ticket-");
+      if (
+        !channel ||
+        channel.type !== ChannelType.GuildText ||
+        !channel.name.startsWith("ai-")
+      ) {
 
-    if (!isTicket) return;
+        return interaction.reply({
+          content: "❌ هذا ليس AI Ticket.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
 
-    // لا يوجد نص
-    if (!message.content?.trim()) return;
+      await interaction.deferUpdate();
 
-    console.log(
-      `💬 ${message.author.tag}: ${message.content}`
-    );
+      try {
 
-    // رسالة مؤقتة
-    const thinking = await message.channel.send(
-      "🤖 **جاري التفكير...**"
-    );
+        await channel.send(
+          "🔒 سيتم إغلاق التكت بعد 3 ثوانٍ..."
+        );
 
-    try {
-      const answer = await askAI(message.content);
+        console.log(
+          `🔒 Closing ticket: ${channel.name}`
+        );
 
-      if (!answer) {
-        return thinking.edit(
-          "❌ الذكاء الاصطناعي لم يرجع رداً."
+        setTimeout(async () => {
+
+          try {
+
+            await channel.delete(
+              "AI Ticket closed"
+            );
+
+          } catch (error) {
+
+            console.log(
+              "❌ DELETE TICKET ERROR:",
+              error
+            );
+          }
+
+        }, 3000);
+
+      } catch (error) {
+
+        console.log(
+          "❌ CLOSE TICKET ERROR:",
+          error
         );
       }
 
-      // Discord حد الرسالة 2000 حرف
-      const chunks = [];
-
-      for (let i = 0; i < answer.length; i += 1900) {
-        chunks.push(answer.slice(i, i + 1900));
-      }
-
-      // تعديل رسالة التفكير
-      await thinking.edit(chunks.shift());
-
-      // إرسال باقي الرد
-      for (const chunk of chunks) {
-        await message.channel.send(chunk);
-      }
-
-      console.log("✅ Groq AI replied");
-    } catch (error) {
-      console.error("================================");
-      console.error("❌ GROQ ERROR");
-      console.error(error);
-      console.error("================================");
-
-      await thinking.edit(
-        "❌ **الذكاء الاصطناعي غير متاح حالياً.**\n" +
-        "تأكد من أن `GROQ_API_KEY` صحيح في Railway Variables."
-      );
+      return;
     }
-  } catch (error) {
-    console.error("❌ Message handler error:", error);
   }
 });
 
-// =====================================
-// SLASH COMMAND DEPLOYMENT
-// =====================================
+// ================================
+// MESSAGE / AI
+// ================================
 
-client.once("ready", async () => {
+client.on("messageCreate", async message => {
+
   try {
-    const commands = [
-      {
-        name: "panel",
-        description: "إرسال لوحة التكت",
-      },
-    ];
 
-    await client.application.commands.set(commands);
+    if (
+      message.author.bot ||
+      !message.guild
+    ) {
+      return;
+    }
 
-    console.log("✅ تم تسجيل /panel");
+    if (!message.content?.trim()) {
+      return;
+    }
+
+    // ================================
+    // AI CHAT
+    // ================================
+
+    const isAIChat =
+      aiChat &&
+      message.channel.id === aiChat;
+
+    // ================================
+    // AI TICKET
+    // ================================
+
+    const isAITicket =
+      message.channel.type === ChannelType.GuildText &&
+      message.channel.name.startsWith("ai-");
+
+    // ================================
+    // ALLOWED
+    // ================================
+
+    if (!isAIChat && !isAITicket) {
+      return;
+    }
+
+    console.log(
+      `💬 AI Message | ${message.author.tag} | ${message.channel.name}: ${message.content}`
+    );
+
+    // ================================
+    // TYPING
+    // ================================
+
+    await message.channel.sendTyping();
+
+    // ================================
+    // AI
+    // ================================
+
+    const answer =
+      await askAI(message.content);
+
+    // ================================
+    // DISCORD LIMIT
+    // ================================
+
+    const text =
+      answer?.slice(0, 1900) ||
+      "❌ لم أستطع إنشاء رد.";
+
+    // ================================
+    // REPLY
+    // ================================
+
+    await message.reply({
+
+      content: text,
+
+      allowedMentions: {
+        repliedUser: false
+      }
+
+    });
+
+    console.log(
+      "✅ AI replied successfully"
+    );
+
   } catch (error) {
-    console.error("❌ Command registration error:", error);
+
+    console.log(
+      "❌ MESSAGE ERROR:"
+    );
+
+    console.error(error);
+
+    try {
+
+      await message.channel.send(
+        "❌ حصل خطأ أثناء معالجة رسالتك."
+      );
+
+    } catch {}
   }
 });
 
-// =====================================
-// ERROR HANDLING
-// =====================================
+// ================================
+// ERRORS
+// ================================
 
-process.on("unhandledRejection", (error) => {
-  console.error("❌ Unhandled Rejection:", error);
-});
+process.on(
+  "unhandledRejection",
+  error => {
+    console.log(
+      "❌ Unhandled Rejection:"
+    );
+    console.error(error);
+  }
+);
 
-process.on("uncaughtException", (error) => {
-  console.error("❌ Uncaught Exception:", error);
-});
+process.on(
+  "uncaughtException",
+  error => {
+    console.log(
+      "❌ Uncaught Exception:"
+    );
+    console.error(error);
+  }
+);
 
-// =====================================
+// ================================
 // LOGIN
-// =====================================
+// ================================
 
 client
-  .login(process.env.DISCORD_TOKEN)
-  .catch((error) => {
-    console.error("❌ Discord Login Error:", error);
+  .login(TOKEN)
+  .then(() => {
+    console.log("🔐 Connecting to Discord...");
+  })
+  .catch(error => {
+
+    console.log(
+      "❌ Discord Login Error:"
+    );
+
+    console.error(error);
+
     process.exit(1);
   });
